@@ -1,7 +1,7 @@
 // Full-screen messages: starting up, problems, setup mode and updating
 
 void showMessage(const String& title, const String& line1, const String& line2) {
-  tft.fillScreen(C_BG);
+  fillScreenBg();
   drawLogo(W / 2 - 22, 46, 44, 31);
   tft.setTextSize(1);
   tft.setFont(F_MED);
@@ -17,7 +17,7 @@ void showMessage(const String& title, const String& line1, const String& line2) 
 }
 
 void drawSetupScreen() {
-  tft.fillScreen(C_BG);
+  fillScreenBg();
   drawLogo(12, 12, 28, 20);
   tft.setTextSize(1);
   tft.setFont(F_MED);
@@ -56,7 +56,7 @@ void drawUpdateScreen(const String& version, int percent) {
   static int lastPercent = -1;
   if (percent >= 0 && percent == lastPercent) return;
   if (percent < 0 || lastPercent < 0) {
-    tft.fillScreen(C_BG);
+    fillScreenBg();
     drawLogo(W / 2 - 22, 40, 44, 31);
     tft.setTextSize(1);
     tft.setFont(F_MED);

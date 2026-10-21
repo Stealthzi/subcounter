@@ -2,21 +2,53 @@
 
 void drawCurrentPage() {
   if (currentPage < 0) return;
+  if (keyboardOpen) {
+    drawKeyboard();
+    return;
+  }
+  if (lampGlowing()) {
+    drawLampGlow();
+    return;
+  }
+  // These two fill the whole screen
+  if (currentPage == PAGE_SCREENSAVER) {
+    startScreensaver();
+    return;
+  }
+  if (currentPage == PAGE_MOODLAMP) {
+    moodLabelUntil = millis() + 2500;
+    moodLampFrame();
+    return;
+  }
   clearContent();
   drawHeader();
   switch (currentPage) {
-    case PAGE_SUBS:    drawSubsPage(); break;
-    case PAGE_CHANNEL: drawChannelPage(); break;
-    case PAGE_LATEST:  drawLatestPage(); break;
-    case PAGE_RECENT:  drawRecentPage(); break;
-    case PAGE_TOP:     drawTopPage(); break;
-    case PAGE_COMMENT: drawCommentPage(); break;
-    case PAGE_GROWTH:  drawGrowthPage(); break;
-    case PAGE_COMPARE: drawComparePage(); break;
-    case PAGE_LIVE:    drawLivePage(); break;
-    case PAGE_CLOCK:   drawClockPage(); break;
-    case PAGE_WEATHER: drawWeatherPage(); break;
-    case PAGE_CRYPTO:  drawCryptoPage(); break;
+    case PAGE_SUBS:      drawSubsPage(); break;
+    case PAGE_CHANNEL:   drawChannelPage(); break;
+    case PAGE_LATEST:    drawLatestPage(); break;
+    case PAGE_RECENT:    drawRecentPage(); break;
+    case PAGE_TOP:       drawTopPage(); break;
+    case PAGE_COMMENT:   drawCommentPage(); break;
+    case PAGE_GROWTH:    drawGrowthPage(); break;
+    case PAGE_COMPARE:   drawComparePage(); break;
+    case PAGE_LIVE:      drawLivePage(); break;
+    case PAGE_CLOCK:     drawClockPage(); break;
+    case PAGE_WEATHER:   drawWeatherPage(); break;
+    case PAGE_CRYPTO:    drawCryptoPage(); break;
+    case PAGE_ENERGY:    drawEnergyPage(); break;
+    case PAGE_FUEL:      drawFuelPage(); break;
+    case PAGE_CALENDAR:  drawCalendarPage(); break;
+    case PAGE_MESSAGES:  drawMessagesPage(); break;
+    case PAGE_PET:       drawPetPage(); break;
+    case PAGE_ALERTS:    drawAlertsPage(); break;
+    case PAGE_GAMES:     drawGamesPage(); break;
+    case PAGE_EIGHTBALL: drawEightBallPage(); break;
+    case PAGE_STOPWATCH: drawStopwatchPage(); break;
+    case PAGE_AIR:       drawAirPage(); break;
+    case PAGE_COUNTDOWN: drawCountdownPage(); break;
+    case PAGE_JOKE:      drawJokePage(); break;
+    case PAGE_SPOTIFY:   drawSpotifyPage(); break;
+    case PAGE_ANALYTICS: drawAnalyticsPage(); break;
   }
   drawPageDots();
 }
@@ -55,7 +87,7 @@ void drawSubsPage() {
   tft.drawString((compact(target - channel.subs) + " to go").c_str(), W - 14, 156);
 
   float fraction = (float)(channel.subs - from) / (float)(target - from);
-  drawProgressBar(14, 176, W - 28, 14, fraction, C_RED);
+  drawProgressBar(14, 176, W - 28, 14, fraction, C_ACCENT);
 
   tft.setTextColor(C_DIM);
   tft.setTextDatum(D_TL);
@@ -210,7 +242,7 @@ void drawGrowthPage() {
     tft.setTextDatum(D_TC);
     if (daily[i] >= 0) {
       int h = max(3, (int)((bottom - top) * daily[i] / biggest));
-      tft.fillSmoothRoundRect(x, bottom - h, barW, h, 4, i == 6 ? C_ACCENT : C_RED);
+      tft.fillSmoothRoundRect(x, bottom - h, barW, h, 4, i == 6 ? C_ACCENT : C_ACCENT2);
       tft.setTextColor(C_WHITE);
       tft.drawString(compact(daily[i]).c_str(), cx, bottom - h - 16);
     } else {
@@ -260,7 +292,7 @@ void drawComparePage() {
   float share = (channel.subs + rival.subs) ? (float)channel.subs / (float)(channel.subs + rival.subs) : 0.5f;
   tft.fillSmoothRoundRect(14, 204, W - 28, 10, 5, C_DIM);
   int fw = (int)((W - 28) * share);
-  if (fw >= 10) tft.fillSmoothRoundRect(14, 204, fw, 10, 5, C_RED);
+  if (fw >= 10) tft.fillSmoothRoundRect(14, 204, fw, 10, 5, C_ACCENT);
 }
 
 // ---------------------------------------------------------------- live
@@ -367,7 +399,7 @@ void drawWeatherIcon(int x, int y, int code, bool isDay) {
     } else {
       int cx = clear ? x + 45 : x + 32, cy = clear ? y + 42 : y + 28, r = clear ? 22 : 15;
       tft.fillSmoothCircle(cx, cy, r, C_CLOUD);
-      tft.fillSmoothCircle(cx + r / 2, cy - r / 3, r * 4 / 5, C_BG);
+      tft.fillSmoothCircle(cx + r / 2, cy - r / 3, r * 4 / 5, bgAt(cy));
     }
     if (clear) return;
   }
@@ -463,7 +495,7 @@ void drawCryptoPage() {
 void showInfoScreen() {
   infoShowing = true;
   infoShownAt = millis();
-  tft.fillScreen(C_BG);
+  fillScreenBg();
   drawLogo(12, 12, 28, 20);
   tft.setFont(F_MED);
   tft.setTextDatum(D_ML);

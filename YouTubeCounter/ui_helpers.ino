@@ -148,16 +148,152 @@ void drawLogo(int x, int y, int w, int h) {
   tft.fillTriangle(cx - tw / 2, cy - th / 2, cx - tw / 2, cy + th / 2, cx + tw / 2, cy, C_WHITE);
 }
 
+// ---------------------------------------------------------------- theme and style
+
+uint16_t to565(uint32_t rgb) {
+  return RGB565((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
+}
+
+uint32_t to888(uint16_t c) {
+  uint32_t r = (c >> 11) & 0x1F, g = (c >> 5) & 0x3F, b = c & 0x1F;
+  return ((r * 255 / 31) << 16) | ((g * 255 / 63) << 8) | (b * 255 / 31);
+}
+
+// Mix two RGB888 colours: t = 0 gives a, t = 1 gives b
+uint16_t mix(uint32_t a, uint32_t b, float t) {
+  if (t < 0) t = 0;
+  if (t > 1) t = 1;
+  int r = ((a >> 16) & 0xFF) + (int)((((int)((b >> 16) & 0xFF)) - (int)((a >> 16) & 0xFF)) * t);
+  int g = ((a >> 8) & 0xFF) + (int)((((int)((b >> 8) & 0xFF)) - (int)((a >> 8) & 0xFF)) * t);
+  int bl = (a & 0xFF) + (int)((((int)(b & 0xFF)) - (int)(a & 0xFF)) * t);
+  return RGB565(r, g, bl);
+}
+
+void applyTheme() {
+  const Theme& th = THEMES[cfg.theme < THEME_COUNT ? cfg.theme : 0];
+  C_BG_TOP    = to565(th.bgTop);
+  C_BG_BOTTOM = to565(th.bgBottom);
+  C_BG        = mix(th.bgTop, th.bgBottom, 0.5f);
+  C_CARD      = to565(th.card);
+  C_EDGE      = to565(th.edge);
+  C_LINE      = to565(th.line);
+  C_GREY      = to565(th.grey);
+  C_DIM       = to565(th.dim);
+  C_ACCENT    = to565(th.accent);
+  C_ACCENT2   = to565(th.accent2);
+  C_GLOW      = to565(th.glow);
+}
+
+const Theme& theme() {
+  return THEMES[cfg.theme < THEME_COUNT ? cfg.theme : 0];
+}
+
+// The background is a gentle top-to-bottom gradient
+uint16_t bgAt(int y) {
+  return mix(theme().bgTop, theme().bgBottom, (float)y / (H - 1));
+}
+
+void fillBg(int x, int y, int w, int h) {
+  tft.startWrite();
+  for (int row = y; row < y + h; row++) tft.writeFastHLine(x, row, w, bgAt(row));
+  tft.endWrite();
+}
+
+void fillScreenBg() {
+  fillBg(0, 0, W, H);
+}
+
+// Draws text with a left-to-right colour gradient, like a styled display name.
+// Uses the current font and size; (x, y) is the text's top-left, or its
+// baseline-left if baseline is true.
+void gradientText(const String& text, int x, int y, bool baseline, uint32_t from, uint32_t to) {
+  int w = tft.textWidth(text.c_str());
+  if (w <= 0) return;
+  tft.setTextDatum(baseline ? D_BL : D_TL);
+  const int bands = 14;
+  int bandW = w / bands + 1;
+  for (int i = 0; i < bands; i++) {
+    tft.setClipRect(x + i * bandW, 0, bandW, H);
+    tft.setTextColor(mix(from, to, (float)i / (bands - 1)));
+    tft.drawString(text.c_str(), x, y);
+  }
+  tft.clearClipRect();
+}
+
+// Same, centred on cx
+void gradientTextCentred(const String& text, int cx, int y, bool baseline) {
+  gradientText(text, cx - tft.textWidth(text.c_str()) / 2, y, baseline, theme().accent, theme().accent2);
+}
+
+// A soft glowing ring, fading out into the background
+void drawGlow(int cx, int cy, int r, int spread, uint32_t colour) {
+  for (int i = spread; i >= 0; i--) {
+    float t = (float)i / spread;
+    tft.drawCircle(cx, cy, r + i, mix(colour, to888(bgAt(cy)), t));
+  }
+}
+
+// A card: rounded box with a thin outline
+void drawCardBox(int x, int y, int w, int h) {
+  tft.fillSmoothRoundRect(x, y, w, h, 10, C_EDGE);
+  tft.fillSmoothRoundRect(x + 1, y + 1, w - 2, h - 2, 9, C_CARD);
+}
+
 uint16_t statusColour() {
   if (WiFi.status() != WL_CONNECTED || lastError.length()) return C_RED;
   if (youtubeBlocked()) return C_AMBER;
   return C_GREEN;
 }
 
-void drawHeader() {
-  tft.fillRect(0, 0, W, 34, C_BG);
-  drawLogo(8, 8, 28, 20);
+// Each section of pages has its own colour and title
+bool isYouTubePage(int page) {
+  return page <= PAGE_LIVE || page == PAGE_ANALYTICS;
+}
 
+uint16_t pageColour(int page) {
+  switch (page) {
+    case PAGE_ENERGY: case PAGE_FUEL: case PAGE_CALENDAR: case PAGE_ALERTS: case PAGE_AIR:
+    case PAGE_COUNTDOWN: case PAGE_CLOCK: case PAGE_WEATHER:
+      return C_BLUE;
+    case PAGE_MESSAGES:
+      return C_PURPLE;
+    case PAGE_PET:
+      return C_GREEN;
+    case PAGE_GAMES: case PAGE_SCREENSAVER: case PAGE_EIGHTBALL: case PAGE_STOPWATCH: case PAGE_MOODLAMP:
+    case PAGE_JOKE: case PAGE_SPOTIFY: case PAGE_CRYPTO:
+      return C_AMBER;
+  }
+  return C_ACCENT;
+}
+
+const char* pageTitle(int page) {
+  switch (page) {
+    case PAGE_CLOCK:       return "Clock";
+    case PAGE_WEATHER:     return "Weather";
+    case PAGE_CRYPTO:      return "Crypto";
+    case PAGE_ENERGY:      return "Energy";
+    case PAGE_FUEL:        return "Petrol prices";
+    case PAGE_CALENDAR:    return "Calendar";
+    case PAGE_MESSAGES:    return "Messages";
+    case PAGE_PET:         return cfg.petName.c_str();
+    case PAGE_ALERTS:      return "Alerts";
+    case PAGE_GAMES:       return "Free games";
+    case PAGE_SCREENSAVER: return "Relax";
+    case PAGE_EIGHTBALL:   return "Magic 8-ball";
+    case PAGE_STOPWATCH:   return "Stopwatch";
+    case PAGE_AIR:         return "Air and pollen";
+    case PAGE_COUNTDOWN:   return "Countdowns";
+    case PAGE_MOODLAMP:    return "Mood lamp";
+    case PAGE_JOKE:        return joke.isFact ? "Fact of the day" : "Joke of the day";
+    case PAGE_SPOTIFY:     return "Now playing";
+  }
+  return "";
+}
+
+void drawHeader() {
+  fillBg(0, 0, W, 34);
+
+  // Right side: unread messages, clock, status dot
   struct tm t;
   String clock = getLocalTime(&t, 0) ? clockText(t) : "";
   tft.setFont(F_SMALL);
@@ -166,38 +302,54 @@ void drawHeader() {
   tft.setTextDatum(D_MR);
   tft.setTextColor(C_GREY);
   tft.drawString(clock.c_str(), W - 20, 18);
-
-  tft.setFont(F_BOLD);
-  tft.setTextDatum(D_ML);
-  tft.setTextColor(C_WHITE);
-  tft.drawString(fitText(channel.title, W - 44 - clockW - 30).c_str(), 44, 18);
-
   tft.fillSmoothCircle(W - 9, 18, 4, statusColour());
+  int rightEdge = W - 26 - clockW;
+  if (unreadCount > 0) {
+    tft.fillSmoothRoundRect(rightEdge - 22, 10, 20, 16, 4, C_PURPLE);
+    tft.setTextDatum(D_MC);
+    tft.setTextColor(C_WHITE);
+    tft.drawString(String(unreadCount).c_str(), rightEdge - 12, 18);
+    rightEdge -= 28;
+  }
+
+  // Left side: YouTube logo and channel name, or the page's colour and title
+  tft.setFont(F_BOLD);
+  if (currentPage < 0 || isYouTubePage(currentPage)) {
+    drawLogo(8, 8, 28, 20);
+    gradientText(fitText(channel.title, rightEdge - 50), 44, 11, false, 0xFFFFFF, theme().accent);
+  } else {
+    uint16_t c = pageColour(currentPage);
+    tft.fillSmoothRoundRect(8, 9, 6, 18, 3, c);
+    gradientText(fitText(pageTitle(currentPage), rightEdge - 28), 22, 11, false, 0xFFFFFF, to888(c));
+  }
+  drawSeasonalHeader();
+  drawHeaderCat();
+  tft.drawFastHLine(0, 33, W, C_LINE);
 }
 
 // Small dots at the bottom showing which page you're on
 void drawPageDots() {
-  int pages[PAGE_COUNT], n = 0, current = -1;
+  int n = 0, current = -1;
   for (int p = 0; p < PAGE_COUNT; p++) {
     if (!pageAvailable(p)) continue;
     if (p == currentPage) current = n;
-    pages[n++] = p;
+    n++;
   }
-  tft.fillRect(0, 227, W, H - 227, C_BG);
+  fillBg(0, 227, W, H - 227);
   if (n < 2) return;
-  int gap = 11;
+  int gap = n > 20 ? 9 : 11;
   int x = W / 2 - (n - 1) * gap / 2;
   for (int i = 0; i < n; i++) {
-    bool on = i == current;
-    tft.fillSmoothCircle(x + i * gap, 233, on ? 3 : 2, on ? C_WHITE : C_DIM);
+    if (i == current) tft.fillSmoothRoundRect(x + i * gap - 5, 230, 10, 6, 3, C_ACCENT);
+    else tft.fillSmoothCircle(x + i * gap, 233, 2, C_DIM);
   }
 }
 
 void clearContent() {
-  tft.fillRect(0, 34, W, H - 34, C_BG);
+  fillBg(0, 34, W, H - 34);
 }
 
-// Small caps label, optionally followed by grey extra text
+// Small label, optionally followed by grey extra text
 void drawLabel(int x, int y, const String& label, uint16_t colour, const String& extra) {
   tft.setFont(F_SMALL);
   tft.setTextSize(1);
@@ -212,7 +364,7 @@ void drawLabel(int x, int y, const String& label, uint16_t colour, const String&
 
 // A rounded card with a small label and a big value
 void drawCard(int x, int y, int w, int h, const String& label, const String& value, uint16_t valueColour) {
-  tft.fillSmoothRoundRect(x, y, w, h, 10, C_CARD);
+  drawCardBox(x, y, w, h);
   tft.setTextSize(1);
   tft.setFont(F_SMALL);
   tft.setTextDatum(D_TC);
@@ -221,29 +373,62 @@ void drawCard(int x, int y, int w, int h, const String& label, const String& val
   tft.setFont(F_LARGE);
   if (tft.textWidth(value.c_str()) > w - 12) tft.setFont(F_MED);
   if (tft.textWidth(value.c_str()) > w - 12) tft.setFont(F_BOLD);
-  tft.setTextColor(valueColour);
-  tft.drawString(fitText(value, w - 12).c_str(), x + w / 2, y + (h > 70 ? 34 : 30));
+  String shown = fitText(value, w - 12);
+  int vy = y + (h > 70 ? 34 : 30);
+  if (valueColour == C_WHITE) {
+    gradientTextCentred(shown, x + w / 2, vy, false);
+  } else {
+    tft.setTextDatum(D_TC);
+    tft.setTextColor(valueColour);
+    tft.drawString(shown.c_str(), x + w / 2, vy);
+  }
 }
 
+// A rounded bar filled with the accent gradient
 void drawProgressBar(int x, int y, int w, int h, float fraction, uint16_t colour) {
   if (fraction < 0) fraction = 0;
   if (fraction > 1) fraction = 1;
   tft.fillSmoothRoundRect(x, y, w, h, h / 2, C_CARD);
   int fw = (int)(w * fraction);
-  if (fw >= h) tft.fillSmoothRoundRect(x, y, fw, h, h / 2, colour);
+  if (fw < h) return;
+  uint32_t from = colour == C_ACCENT ? theme().accent : to888(colour);
+  uint32_t to = colour == C_ACCENT ? theme().accent2 : to888(colour);
+  int r = h / 2;
+  tft.fillSmoothCircle(x + r, y + r, r, mix(from, to, 0));
+  tft.fillSmoothCircle(x + fw - r - 1, y + r, r, mix(from, to, (float)fw / w));
+  tft.startWrite();
+  for (int i = r; i < fw - r; i++) tft.writeFastVLine(x + i, y, h, mix(from, to, (float)i / w));
+  tft.endWrite();
 }
 
-// Draws a big number, scaled to fit maxWidth, visually centred on centreY
+// Draws a big number, scaled to fit maxWidth, visually centred on centreY.
+// White numbers get the theme's gradient.
 void drawBigNumber(const String& text, int cx, int centreY, int maxWidth, float maxScale, uint16_t colour) {
   tft.setFont(F_HUGE);
   tft.setTextSize(1);
   float scale = (float)maxWidth / tft.textWidth(text.c_str());
   if (scale > maxScale) scale = maxScale;
   tft.setTextSize(scale);
-  tft.setTextDatum(D_BC);
-  tft.setTextColor(colour);
-  tft.drawString(text.c_str(), cx, centreY + (int)(17 * scale));
+  int baseline = centreY + (int)(17 * scale);
+  if (colour == C_WHITE) {
+    gradientTextCentred(text, cx, baseline, true);
+  } else {
+    tft.setTextDatum(D_BC);
+    tft.setTextColor(colour);
+    tft.drawString(text.c_str(), cx, baseline);
+  }
   tft.setTextSize(1);
+}
+
+// Fade the backlight out and back in around a page change
+
+void fadeTo(uint8_t target, int steps, int stepMs) {
+  int from = shownBrightness;
+  for (int i = 1; i <= steps; i++) {
+    tft.setBrightness(from + (target - from) * i / steps);
+    delay(stepMs);
+  }
+  shownBrightness = target;
 }
 
 // Text where '`' stands for a degree sign (the fonts don't have one)

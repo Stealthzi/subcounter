@@ -27,6 +27,33 @@ void loadSettings() {
   cfg.ledFlash        = prefs.getBool("led", true);
   cfg.autoUpdate      = prefs.getBool("autoupd", true);
   cfg.earlyUpdates    = prefs.getBool("early", false);
+  cfg.octoAccount     = prefs.getString("octoacct", "");
+  cfg.octoKey         = prefs.getString("octokey", "");
+  cfg.gasInCubicMetres = prefs.getBool("gasm3", true);
+  cfg.fuelType        = prefs.getString("fueltype", "E10");
+  cfg.fuelRadius      = prefs.getUChar("fuelrad", 5);
+  cfg.calendarUrl     = prefs.getString("calurl", "");
+  cfg.msgName         = prefs.getString("msgname", "");
+  cfg.msgCode         = prefs.getString("msgcode", "");
+  cfg.petName         = prefs.getString("petname", "Pixel");
+  cfg.petStrict       = prefs.getBool("petstrict", false);
+  cfg.screensaver     = prefs.getUChar("saver", 2);
+  cfg.screensaverAtNight = prefs.getBool("savernight", false);
+  cfg.metRegion       = prefs.getString("metregion", "UK");
+  cfg.motDate         = prefs.getString("motdate", "");
+  cfg.taxDate         = prefs.getString("taxdate", "");
+  cfg.countdowns      = prefs.getString("countdowns", "");
+  cfg.jokeType        = prefs.getUChar("joketype", 2);
+  cfg.themes          = prefs.getBool("themes", true);
+  cfg.lampColour      = prefs.getULong("lampcol", 0xFF8C28);
+  cfg.spotifyClient   = prefs.getString("spclient", "");
+  cfg.spotifyToken    = prefs.getString("sptoken", "");
+  cfg.googleClient    = prefs.getString("gclient", "");
+  cfg.googleSecret    = prefs.getString("gsecret", "");
+  cfg.googleToken     = prefs.getString("gtoken", "");
+  cfg.theme           = prefs.getUChar("theme", 0);
+  cfg.petType         = prefs.getUChar("pettype", 0);
+  if (cfg.theme >= THEME_COUNT) cfg.theme = 0;
 
   if (cfg.refreshSecs < 15) cfg.refreshSecs = 15;
   if (cfg.pageSecs < 3) cfg.pageSecs = 3;
@@ -61,6 +88,51 @@ void saveSettings() {
   prefs.putBool("led", cfg.ledFlash);
   prefs.putBool("autoupd", cfg.autoUpdate);
   prefs.putBool("early", cfg.earlyUpdates);
+  prefs.putString("octoacct", cfg.octoAccount);
+  prefs.putString("octokey", cfg.octoKey);
+  prefs.putBool("gasm3", cfg.gasInCubicMetres);
+  prefs.putString("fueltype", cfg.fuelType);
+  prefs.putUChar("fuelrad", cfg.fuelRadius);
+  prefs.putString("calurl", cfg.calendarUrl);
+  prefs.putString("msgname", cfg.msgName);
+  prefs.putString("msgcode", cfg.msgCode);
+  prefs.putString("petname", cfg.petName);
+  prefs.putBool("petstrict", cfg.petStrict);
+  prefs.putUChar("saver", cfg.screensaver);
+  prefs.putBool("savernight", cfg.screensaverAtNight);
+  prefs.putString("metregion", cfg.metRegion);
+  prefs.putString("motdate", cfg.motDate);
+  prefs.putString("taxdate", cfg.taxDate);
+  prefs.putString("countdowns", cfg.countdowns);
+  prefs.putUChar("joketype", cfg.jokeType);
+  prefs.putBool("themes", cfg.themes);
+  prefs.putULong("lampcol", cfg.lampColour);
+  prefs.putString("spclient", cfg.spotifyClient);
+  prefs.putString("sptoken", cfg.spotifyToken);
+  prefs.putString("gclient", cfg.googleClient);
+  prefs.putString("gsecret", cfg.googleSecret);
+  prefs.putString("gtoken", cfg.googleToken);
+  prefs.putUChar("theme", cfg.theme);
+  prefs.putUChar("pettype", cfg.petType);
+}
+
+// Each counter starts with its own random pairing code for messages. Called once
+// WiFi is on, because the chip's random numbers are only truly random then.
+void ensurePairCode() {
+  if (cfg.msgCode.length()) return;
+  cfg.msgCode = newPairCode();
+  prefs.putString("msgcode", cfg.msgCode);
+}
+
+// e.g. "K7QM-2XPA-9RTD-4WCE" - letters and numbers that are hard to mix up
+String newPairCode() {
+  const char* chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  String code;
+  for (int i = 0; i < 16; i++) {
+    if (i && i % 4 == 0) code += '-';
+    code += chars[esp_random() % 32];
+  }
+  return code;
 }
 
 // Rough number of YouTube API units this counter uses a day (the free limit is 10,000)
