@@ -1,7 +1,8 @@
 // Remote updates from GitHub Releases.
 //
 // Each release is tagged with its version (e.g. "v2.0.1") and has the program
-// attached as "firmware.bin". Counters check once a day:
+// attached once per board: "firmware-7inch.bin" for the 7" CrowPanel and
+// "firmware.bin" for the 2.8" Cheap Yellow Display. Counters check once a day:
 //   - normally they take the newest full release
 //   - with "Get test versions first" ticked they also take pre-releases,
 //     so a new version can be tried on one counter before the others get it.
@@ -69,7 +70,7 @@ void checkForUpdate() {
     return;
   }
 
-  String url = String("https://github.com/") + UPDATE_REPO + "/releases/download/" + tag + "/firmware.bin";
+  String url = String("https://github.com/") + UPDATE_REPO + "/releases/download/" + tag + "/" + FIRMWARE_FILE;
   Serial.println("Updating from " + url);
   drawUpdateScreen(tag, -1);
   httpUpdate.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);

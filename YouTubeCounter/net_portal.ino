@@ -2,7 +2,6 @@
 // and the page pops up on the phone that joins it. While running normally the
 // same page is at the counter's address on your home WiFi.
 
-unsigned long lastPortalActivity = 0;
 
 void startSetupMode(SetupReason reason) {
   setupMode = true;
@@ -54,6 +53,8 @@ void registerRoutes() {
   server.on("/", HTTP_GET, []() { sendSettingsPage(""); });
   server.on("/save", HTTP_POST, handleSave);
   server.on("/message", HTTP_POST, handleMessage);
+  server.on("/ask", HTTP_GET, []() { sendAskPage(""); });
+  server.on("/ask", HTTP_POST, handleAsk);
   server.on("/update", HTTP_POST, []() {
     lastPortalActivity = millis();
     updateRequested = true;
@@ -131,7 +132,7 @@ const char* PAGE_NAMES[PAGE_COUNT] = {
   "Newest comment", "7-day chart", "Head to head", "Live and premieres", "Clock", "Weather", "Crypto prices",
   "Energy (Octopus)", "Cheapest petrol", "Google Calendar", "Messages and lamp", "Desk pet", "Alerts",
   "Free Epic games", "Screensaver", "Magic 8-ball", "Stopwatch", "Air quality and pollen", "Countdowns",
-  "Mood lamp", "Joke or fact of the day", "Spotify now playing", "Exact YouTube stats"
+  "Mood lamp", "Joke or fact of the day", "Spotify now playing", "Exact YouTube stats", "Weekly report card"
 };
 const char* PAGE_HINTS[PAGE_COUNT] = {
   "Big count, gained today and your next milestone",
@@ -161,10 +162,12 @@ const char* PAGE_HINTS[PAGE_COUNT] = {
   "Colour-changing light, tap to change",
   "A new one every day",
   "Shows when music is playing - needs the Spotify sign-in",
-  "Exact gains, losses, watch time, revenue - needs the YouTube sign-in"
+  "Exact gains, losses, watch time, revenue - needs the YouTube sign-in",
+  "Last week's views and subs with a grade - fills in after a week"
 };
+static_assert(sizeof(PAGE_NAMES) / sizeof(PAGE_NAMES[0]) == PAGE_COUNT, "a page is missing a name");
 const int PAGE_GROUPS[][12] = {
-  {PAGE_SUBS, PAGE_CHANNEL, PAGE_LATEST, PAGE_RECENT, PAGE_TOP, PAGE_COMMENT, PAGE_GROWTH, PAGE_COMPARE, PAGE_LIVE, PAGE_ANALYTICS, -1},
+  {PAGE_SUBS, PAGE_CHANNEL, PAGE_LATEST, PAGE_RECENT, PAGE_TOP, PAGE_COMMENT, PAGE_GROWTH, PAGE_REPORT, PAGE_COMPARE, PAGE_LIVE, PAGE_ANALYTICS, -1},
   {PAGE_CLOCK, PAGE_WEATHER, PAGE_ALERTS, PAGE_AIR, PAGE_ENERGY, PAGE_FUEL, PAGE_CALENDAR, PAGE_COUNTDOWN, -1},
   {PAGE_MESSAGES, PAGE_PET, -1},
   {PAGE_SPOTIFY, PAGE_GAMES, PAGE_JOKE, PAGE_EIGHTBALL, PAGE_STOPWATCH, PAGE_SCREENSAVER, PAGE_MOODLAMP, PAGE_CRYPTO, -1},
@@ -219,8 +222,9 @@ void sendSettingsPage(const String& problem) {
   p.reserve(26000);
   p += PAGE_HEAD;
   p += "<h1><span class=logo></span>YouTube Counter</h1>";
-  p += "<p class=sub>Version " FIRMWARE_VERSION " &middot; " + htmlEscape(hostName) + "</p>";
+  p += "<p class=sub>Version " FIRMWARE_VERSION " &middot; " BOARD_NAME " &middot; " + htmlEscape(hostName) + "</p>";
   if (problem.length()) p += "<div class=msg>" + htmlEscape(problem) + "</div>";
+  if (!setupMode && cfg.openaiKey.length()) p += "<p><a href=\"/ask\">Ask ChatGPT about your data &rarr;</a></p>";
 
   // Messages can be sent from here too (not in setup mode - there's no internet then)
   if (!setupMode && cfg.msgCode.length()) {
@@ -327,8 +331,17 @@ void sendSettingsPage(const String& problem) {
 
   // Pet and fun
   p += fieldset("Desk pet and fun");
-  p += "<label>Pet type<select name=pettype>" + optionTag("1", "Cat - a kitten with a surprise coat", cfg.petType == 1) +
-       optionTag("0", "Classic - an old-school pixel pet", cfg.petType == 0) + "</select></label>";
+  {
+    const char* desc[SP_COUNT] = {"Classic - an old-school pixel pet", "Cat - a kitten with a surprise coat",
+                                  "Dog", "Hamster", "Dragon - hatches from an egg"};
+    p += "<label>Pet type<select name=pettype>";
+    for (int sp = 0; sp < SP_COUNT; sp++) {
+      bool open = speciesUnlocked(sp);
+      p += "<option value=" + String(sp) + (cfg.petType == sp ? " selected" : "") + (open ? "" : " disabled") + ">" +
+           desc[sp] + (open ? String("") : " (unlocks at pet level " + String(SPECIES_LEVEL[sp]) + ")") + "</option>";
+    }
+    p += "</select><span class=hint>Your pet is level " + String(rpg.level) + " - more pets unlock as it levels up</span></label>";
+  }
   p += textField("Pet's name", "petname", cfg.petName, "Pixel", "text", "");
   p += "<label>Pet rules<select name=petstrict>" + optionTag("0", "Gentle - it gets sad but never dies", !cfg.petStrict) +
        optionTag("1", "Old-school - neglect it and it dies", cfg.petStrict) + "</select></label>";
@@ -355,10 +368,29 @@ void sendSettingsPage(const String& problem) {
   p += secretField("Google client secret", "gsecret", cfg.googleSecret, "", "");
   p += secretField("YouTube sign-in pass", "gtoken", cfg.googleToken, "", "");
 
+  // Ask ChatGPT
+  p += fieldset("Ask ChatGPT about your data");
+  p += "<p class=note>Ask questions from your phone on the <a href=\"/ask\">Ask ChatGPT</a> page. It needs your own OpenAI "
+       "API key (from platform.openai.com - pay as you go, pennies a month). Your ChatGPT Plus subscription doesn't cover it.</p>";
+  p += secretField("OpenAI API key", "aikey", cfg.openaiKey, "sk-...", "Stays on the counter");
+  p += textField("Model", "aimodel", cfg.aiModel, "gpt-6-luna", "text", "Leave as it is unless OpenAI changes their models");
+  p += "<p class=note>What it may send with a question:</p>";
+  p += checkbox("aich", cfg.aiShare & AI_CHANNEL, "YouTube channel stats", "");
+  p += checkbox("aien", cfg.aiShare & AI_ENERGY, "Energy use and cost", "");
+  p += checkbox("aipe", cfg.aiShare & AI_PETROL, "Petrol prices nearby", "");
+  p += checkbox("aiwe", cfg.aiShare & AI_WEATHER, "Weather", "");
+  p += checkbox("aica", cfg.aiShare & AI_CALENDAR, "Calendar events", "Off unless you tick it - event names can be personal");
+  p += checkbox("aipt", cfg.aiShare & AI_PET, "Your desk pet", "");
+  p += checkbox("aiscr", cfg.aiOnScreen, "Show answers on the counter too", "");
+
   // Screen
   p += fieldset("Screen");
   p += "<label>Colours<select name=theme>";
-  for (int i = 0; i < THEME_COUNT; i++) p += optionTag(String(i), THEMES[i].name, cfg.theme == i);
+  for (int i = 0; i < THEME_COUNT; i++) {
+    bool open = themeUnlocked(i);
+    p += "<option value=" + String(i) + (cfg.theme == i ? " selected" : "") + (open ? "" : " disabled") + ">" +
+         THEMES[i].name + (open ? String("") : " (pet reward at level " + String(THEME_LEVEL[i]) + ")") + "</option>";
+  }
   p += "</select></label>";
   p += "<label>Brightness <span id=bv></span><input type=range name=bright min=10 max=255 value=" +
        String(cfg.brightness) + "></label>";
@@ -368,6 +400,13 @@ void sendSettingsPage(const String& problem) {
        optionTag("0", "Off", cfg.nightBrightness == 0) + optionTag("5", "Very dim", cfg.nightBrightness == 5) +
        optionTag("15", "Dim", cfg.nightBrightness == 15) + optionTag("40", "Low", cfg.nightBrightness == 40) +
        "</select></label></div>";
+#if BOARD_7INCH
+  p += checkbox("recal", false, "Check the touch screen again", "Asks you to tap a dot when it restarts - try this if taps land in the wrong place");
+  p += "<label>Board version<select name=boardrev>" +
+       optionTag("13", "V1.3, V1.4 or V1.5 (most boards)", cfg.boardRev >= 13) +
+       optionTag("12", "V1.2", cfg.boardRev == 12) +
+       "</select><span class=hint>Printed on the back of the board. Change this if the screen stays dark or touch doesn't work.</span></label>";
+#else
   p += "<label>Screen type<select name=screen>" +
        optionTag("0", "Standard (most boards)", cfg.screenType == 0) +
        optionTag("1", "Standard, colours inverted", cfg.screenType == 1) +
@@ -376,6 +415,7 @@ void sendSettingsPage(const String& problem) {
        "</select><span class=hint>Change this if colours look like a photo negative or the screen stays blank</span></label>";
   p += checkbox("led", cfg.ledFlash, "Flash the light on the back for news", "New subscribers, messages, the pet calling");
   p += checkbox("recal", false, "Line up the touch screen again", "Asks you to tap the corners when it restarts");
+#endif
 
   // Updates
   p += fieldset("Updates");
@@ -455,7 +495,9 @@ void handleSave() {
   cfg.nightTo         = argInt("nto", cfg.nightTo, 0, 23);
   cfg.nightBrightness = argInt("nbright", cfg.nightBrightness, 0, 255);
   cfg.screenType      = argInt("screen", cfg.screenType, 0, 3);
-  cfg.theme           = argInt("theme", cfg.theme, 0, THEME_COUNT - 1);
+  cfg.boardRev        = argInt("boardrev", cfg.boardRev, 12, 13);
+  int wantTheme       = argInt("theme", cfg.theme, 0, THEME_COUNT - 1);
+  if (themeUnlocked(wantTheme)) cfg.theme = wantTheme;
   cfg.ledFlash        = server.hasArg("led");
   cfg.autoUpdate      = server.hasArg("autoupd");
   cfg.earlyUpdates    = server.hasArg("early");
@@ -483,7 +525,8 @@ void handleSave() {
   cfg.petName = argText("petname");
   if (!cfg.petName.length()) cfg.petName = "Pixel";
   cfg.petStrict = server.arg("petstrict") == "1";
-  cfg.petType = argInt("pettype", cfg.petType, 0, 1);
+  int wantPet = argInt("pettype", cfg.petType, 0, SP_COUNT - 1);
+  if (wantPet != cfg.petType && speciesUnlocked(wantPet)) switchSpecies(wantPet);
   cfg.screensaver = argInt("saver", cfg.screensaver, 0, 2);
   cfg.screensaverAtNight = server.hasArg("savernight");
   cfg.jokeType = argInt("joketype", cfg.jokeType, 0, 2);
@@ -493,6 +536,13 @@ void handleSave() {
   cfg.googleClient = argText("gclient");
   argSecret("gsecret", cfg.googleSecret);
   argSecret("gtoken", cfg.googleToken);
+  argSecret("aikey", cfg.openaiKey);
+  cfg.aiModel = argText("aimodel");
+  if (!cfg.aiModel.length()) cfg.aiModel = "gpt-6-luna";
+  cfg.aiShare = (server.hasArg("aich") ? AI_CHANNEL : 0) | (server.hasArg("aien") ? AI_ENERGY : 0) |
+                (server.hasArg("aipe") ? AI_PETROL : 0) | (server.hasArg("aiwe") ? AI_WEATHER : 0) |
+                (server.hasArg("aica") ? AI_CALENDAR : 0) | (server.hasArg("aipt") ? AI_PET : 0);
+  cfg.aiOnScreen = server.hasArg("aiscr");
   if (server.hasArg("recal")) prefs.putBool("calNext", true);
 
   if (cfg.wifiName.length() == 0 || cfg.apiKey.length() == 0 || cfg.channel.length() == 0) {

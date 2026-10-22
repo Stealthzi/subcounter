@@ -12,6 +12,7 @@ void drawCurrentPage() {
   }
   // These two fill the whole screen
   if (currentPage == PAGE_SCREENSAVER) {
+    tft.fillSides(RGB565(0, 0, 0));
     startScreensaver();
     return;
   }
@@ -20,6 +21,7 @@ void drawCurrentPage() {
     moodLampFrame();
     return;
   }
+  drawSides();
   clearContent();
   drawHeader();
   switch (currentPage) {
@@ -49,6 +51,7 @@ void drawCurrentPage() {
     case PAGE_JOKE:      drawJokePage(); break;
     case PAGE_SPOTIFY:   drawSpotifyPage(); break;
     case PAGE_ANALYTICS: drawAnalyticsPage(); break;
+    case PAGE_REPORT:    drawReportPage(); break;
   }
   drawPageDots();
 }
@@ -150,10 +153,14 @@ void drawVideoDetail(const String& label, const VideoInfo& v, bool showPerHour) 
   String comments = v.hasComments ? compact(v.comments) : String("off");
   if (showPerHour) {
     long perHour = viewsPerHour();
-    drawCard(8, 146, 97, 76, "LIKES", likes, C_WHITE);
-    drawCard(111, 146, 97, 76, "COMMENTS", comments, C_WHITE);
-    drawCard(214, 146, 97, 76, "PER HOUR",
+    bool real;
+    float vs = vsUsual(real);
+    drawCard(8, 146, 73, 76, "LIKES", likes, C_WHITE);
+    drawCard(85, 146, 73, 76, "COMMENTS", comments, C_WHITE);
+    drawCard(162, 146, 73, 76, "PER HOUR",
              perHour >= 0 ? "+" + compact(perHour) : String("-"), perHour > 0 ? C_GREEN : C_DIM);
+    drawCard(239, 146, 73, 76, "VS USUAL", vsUsualText(),
+             vs <= 0 ? C_DIM : vs >= 1.0f ? C_GREEN : C_AMBER);
   } else {
     drawCard(8, 146, 148, 76, "LIKES", likes, C_WHITE);
     drawCard(164, 146, 148, 76, "COMMENTS", comments, C_WHITE);

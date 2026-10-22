@@ -155,11 +155,14 @@ void hatch(uint32_t t) {
   pet.nextHunger = t + hungerInterval();
   pet.nextHappy = t + hungerInterval() * 6 / 5;
   pet.nextPoop = t + 90 * 60;
-  if (cfg.petType == 1) {
+  if (cfg.petType == SP_CAT) {
     // The surprise: what colour is the kitten?
     pet.spare[0] = esp_random() % 6;
     pet.spare[1] = 1;
+    rpg.coat[SP_CAT] = pet.spare[0];
     petSay("It's a " + String(COAT_NAMES[pet.spare[0]]) + " kitten!", 6000);
+  } else if (cfg.petType >= SP_DOG) {
+    petSay(String("It's a ") + coatName(cfg.petType) + " " + speciesName(cfg.petType) + "!", 6000);
   } else {
     petSay("Hello!", 4000);
   }
@@ -180,6 +183,15 @@ void petStep(uint32_t t) {
     pet.stage = want;
     if (want == PET_ADULT) pet.form = pet.mistakes <= 3 ? 0 : pet.mistakes <= 8 ? 1 : 2;
     pet.weight += 3;
+  }
+
+  // Out on a mission: it's having fun, so nothing wears off and it can't call you
+  if (missionActive()) {
+    pet.nextHunger += 60;
+    pet.nextHappy += 60;
+    pet.nextPoop += 60;
+    pet.calledAt = 0;
+    return;
   }
 
   // Bedtime (babies just nap when they like)
@@ -280,7 +292,8 @@ bool petNeedsYou() {
 }
 
 bool petBusy() {
-  return petMenu == MENU_GAME || petMenu == MENU_LASER;
+  return petMenu == MENU_GAME || petMenu == MENU_LASER || (petMenu == MENU_BATTLE && battleRunning()) ||
+         (petMenu == MENU_MINIGAME && miniRunning());
 }
 
 void petSay(const String& text, unsigned long ms) {
@@ -295,7 +308,10 @@ void petCelebrate() {
 }
 
 void petLeave() {
+  if (petMenu == MENU_MINIGAME && miniRunning()) endMiniGame();
+  stopBattle();
   petMenu = MENU_MAIN;
+  saveRpg();
 }
 
 // ---------------------------------------------------------------- playdates
@@ -362,6 +378,52 @@ void drawPetStatus() {
   uint32_t days = ((uint32_t)time(nullptr) - pet.born) / 86400 + 1;
   canvas.setTextDatum(D_TR);
   canvas.drawString(("Day " + String(days) + "  " + String(pet.weight) + "g").c_str(), W - 8, 4);
+
+  // Second row: level and XP, coins, energy, streak, and any unopened boxes
+  int y = 23;
+  canvas.setTextDatum(D_ML);
+  canvas.setTextColor(C_WHITE);
+  int lw = canvas.drawString(("Lv " + String(rpg.level)).c_str(), 8, y);
+  int bx = 8 + lw + 6, bw = 92;
+  float frac = rpg.level >= MAX_LEVEL ? 1.0f : (float)rpg.xp / xpNeeded(rpg.level);
+  canvas.fillRoundRect(bx, y - 3, bw, 6, 3, C_LINE);
+  if (frac > 0.04f) canvas.fillRoundRect(bx, y - 3, max(6, (int)(bw * frac)), 6, 3, C_ACCENT);
+  int x = bx + bw + 14;
+  canvas.fillCircle(x, y, 5, C_YELLOW);  // coins
+  canvas.fillCircle(x, y, 2, mix(0xFFD640, 0x000000, 0.35f));
+  canvas.setTextColor(C_GREY);
+  x += 8 + canvas.drawString(String(rpg.coins).c_str(), x + 8, y);
+  x += 12;
+  canvas.fillTriangle(x + 2, y - 6, x - 3, y + 1, x + 1, y + 1, C_ACCENT2);  // energy bolt
+  canvas.fillTriangle(x + 1, y - 1, x + 4, y - 1, x - 1, y + 6, C_ACCENT2);
+  x += 8 + canvas.drawString(String(rpg.energy).c_str(), x + 8, y);
+  if (rpg.streak > 1) {
+    x += 12;
+    canvas.fillTriangle(x - 4, y + 5, x + 4, y + 5, x, y - 6, C_AMBER);  // streak flame
+    canvas.fillTriangle(x - 2, y + 5, x + 2, y + 5, x, y - 1, C_YELLOW);
+    canvas.drawString(String(rpg.streak).c_str(), x + 8, y);
+  }
+  if (rpg.boxes > 0 && (petFrameNo / 2) % 2) drawShape(canvas, S_BOX, W - 16, y, 16, 0xFFC83D, 0xE03050);
+}
+
+// While the pet's away: an empty room, where it went and when it'll be back
+void drawAwayScene() {
+  canvas.setTextSize(1);
+  canvas.setFont(F_BOLD);
+  canvas.setTextDatum(D_TC);
+  canvas.setTextColor(C_WHITE);
+  canvas.drawString((cfg.petName + " is exploring the " + placeName(rpg.missionPlace)).c_str(), W / 2, 50);
+  canvas.setFont(F_SMALL);
+  canvas.setTextColor(C_GREY);
+  canvas.drawString(("Back in " + timeLeftText(missionSecondsLeft()) + "  -  tap to check").c_str(), W / 2, 74);
+  int w = 180;
+  canvas.fillRoundRect(W / 2 - w / 2, 94, w, 6, 3, C_LINE);
+  canvas.fillRoundRect(W / 2 - w / 2, 94, max(6, (int)(w * missionProgress())), 6, 3, C_ACCENT);
+  // little paw prints leading out of the room
+  for (int i = 0; i < 5; i++) {
+    int px = 40 + i * 26 + ((petFrameNo / 3 + i) % 2) * 2, py = PET_SCENE_H - 22 - (i % 2) * 6;
+    canvas.fillCircle(px, py, 3, C_DIM);
+  }
 }
 
 // Weather outfits: umbrella in the rain, scarf when cold, shades when sunny
@@ -401,18 +463,41 @@ void drawSpeech(const String& text, int x, int y) {
 }
 
 void petFrame() {
+  if (petFullScreen()) return;  // menus are drawn once, not animated
+  if (petSpecialScene()) {
+    specialSceneFrame();
+    return;
+  }
   if (!ensureCanvas(W, PET_SCENE_H)) return;
   petFrameNo++;
   unsigned long now = millis();
 
-  // Scene background: night sky with the light off, otherwise the theme
-  bool dark = pet.lightsOff && pet.asleep;
+  // Things to tell you: level-ups, badges, quests done...
+  if (now >= petSpeechUntil) {
+    String notice;
+    if (takeRpgNotice(notice)) petSay(notice, 3500);
+  }
+
+  // The room: night sky with the light off, otherwise the theme or wallpaper,
+  // then the floor and furniture
+  int floorY = PET_SCENE_H - 14;
+  bool dark = pet.lightsOff && pet.asleep && !missionActive();
   for (int y = 0; y < PET_SCENE_H; y++) {
     uint16_t c = dark ? mix(0x02030A, 0x0A0E24, (float)y / PET_SCENE_H) : bgAt(PET_SCENE_Y + y);
     canvas.drawFastHLine(0, y, W, c);
   }
-  canvas.fillRect(0, PET_SCENE_H - 14, W, 14, dark ? RGB565(8, 10, 20) : C_CARD);
+  drawRoomWallpaper(floorY, dark);
+  canvas.fillRect(0, floorY, W, 14, dark ? RGB565(8, 10, 20) : C_CARD);
+  drawRoomItems(floorY, dark);
+  if (!dark && cfg.petType != SP_HAMSTER) drawRoomToy(floorY, 222);
   drawPetStatus();
+
+  if (missionActive()) {
+    drawAwayScene();
+    canvas.pushSprite(0, PET_SCENE_Y);
+    return;
+  }
+  bool wearing = rpg.gear[0] != NO_ITEM || rpg.gear[1] != NO_ITEM;
 
   const int s = 6;
   bool celebrating = now < petCelebrateUntil;
@@ -423,10 +508,12 @@ void petFrame() {
 
   // Seasonal touches and the visiting pet
   if (now < visitorUntil) {
-    if (visitorType == 1) {
+    if (visitorType == SP_CAT) {
       coatOverride = visitorCoat;
       drawCatSprite(CAT_SIT, 18, PET_SCENE_H - 14 - 15 * 4 + 2, 4, false, false, 0);
       coatOverride = -1;
+    } else if (visitorType >= SP_DOG && visitorType < SP_COUNT) {
+      drawPetPose(visitorType, POSE_SIT, 18, PET_SCENE_H - 14 - 15 * 4 + 2, 4, false, false, 0, false);
     } else {
       drawSprite(petSprite(visitorStage), 18, PET_SCENE_H - 14 - 16 * 4 + 6, 4,
                  petBodyColour(visitorStage, visitorForm), true, false, 0);
@@ -443,22 +530,32 @@ void petFrame() {
     canvas.setTextDatum(D_TC);
     canvas.setTextColor(C_CLOUD);
     canvas.drawString((cfg.petName + " has gone to pet heaven").c_str(), W / 2, 30);
-  } else if (cfg.petType == 1) {
-    ensureCatCoat();
-    drawCatScene(PET_SCENE_H - 14, dark);
-    // signs and speech follow the cat around
-    int cs = pet.stage == PET_BABY ? 4 : pet.stage == PET_CHILD ? 5 : 6;
+  } else if (cfg.petType >= SP_CAT) {
+    if (cfg.petType == SP_CAT) {
+      ensureCatCoat();
+      drawCatScene(floorY, dark);
+    } else {
+      drawCritterScene(floorY, dark);
+    }
+    // signs and speech follow the pet around
+    int cs = petPixelSize();
     px = (int)catX - 8 * cs;
-    py = PET_SCENE_H - 14 - 15 * cs;
-    if (pet.stage == PET_ADULT && pet.form == 0) {  // star cat: a gold collar and bell
-      canvas.fillRect(px + 4 * cs, py + 10 * cs, 8 * cs, cs, C_YELLOW);
+    py = floorY - 15 * cs;
+    bool sitting = !trickActive() && (catHabit == H_SIT || catHabit == H_GROOM || catHabit == H_BLINK || catHabit == H_PURR);
+    if (cfg.petType == SP_CAT && sitting && !wearing && pet.stage == PET_ADULT && pet.form == 0) {
+      canvas.fillRect(px + 4 * cs, py + 10 * cs, 8 * cs, cs, C_YELLOW);  // star cat: a gold collar and bell
       canvas.fillCircle(px + 8 * cs, py + 11 * cs + 2, cs, C_YELLOW);
     }
-    if (!dark && (catHabit == H_SIT || catHabit == H_GROOM || catHabit == H_BLINK || catHabit == H_PURR)) {
+    if (cfg.petType == SP_CAT && sitting) drawGear(px, py + 2, cs, false);
+    if (!dark && sitting && !wearing) {
       drawOutfit(px, py, cs, false);
       drawSeasonalPet(px, py, cs);
     }
+  } else if (trickActive() && petIsAlive()) {
+    drawTrickFrame(px + 8 * s, floorY, dark ? 0.6f : 0);
   } else {
+    if (petEvolved() && petIsAlive() && !pet.asleep) drawEvolveAura(px + 8 * s, py + 8 * s, 10 * s);
+    if (petIsAlive()) drawGear(px, py, s, true);
     drawSprite(petSprite(pet.stage), px, py, s, petBodyColour(pet.stage, pet.form), flip, pet.asleep, dark ? 0.6f : 0);
     if (pet.stage == PET_ADULT && pet.form == 0) {  // star form wears a crown
       int cx = px + 8 * s;
@@ -470,8 +567,9 @@ void petFrame() {
       canvas.drawWideLine(px + 3 * s, py + 4 * s, px + 6 * s, py + 5 * s, 2, RGB565(20, 10, 10));
       canvas.drawWideLine(px + 13 * s, py + 4 * s, px + 10 * s, py + 5 * s, 2, RGB565(20, 10, 10));
     }
-    if (!dark) drawOutfit(px, py, s, flip);
-    drawSeasonalPet(px, py, s);
+    if (petIsAlive()) drawGear(px, py, s, false);
+    if (!dark && !wearing) drawOutfit(px, py, s, flip);
+    if (!wearing) drawSeasonalPet(px, py, s);
   }
 
   // Poos on the floor
@@ -526,19 +624,52 @@ void drawPetButtons() {
   } else if (petMenu == MENU_LASER) {
     drawButton(80, PET_BTN_Y, 160, PET_BTN_H, "Done", C_LINE, C_WHITE);
   } else if (petMenu == MENU_PLAY) {
-    drawButton(4, PET_BTN_Y, 100, PET_BTN_H, cfg.petType == 1 ? "Laser" : "Game", C_CARD, C_WHITE);
-    drawButton(110, PET_BTN_Y, 100, PET_BTN_H, "Visit", C_PURPLE, C_WHITE);
-    drawButton(216, PET_BTN_Y, 100, PET_BTN_H, "Back", C_LINE, C_WHITE);
+    const char* labels[] = {cfg.petType == SP_CAT ? "Laser" : "Guess", "Games", "Tricks", "Visit", "Back"};
+    for (int i = 0; i < 5; i++)
+      drawButton(4 + i * 63, PET_BTN_Y, 59, PET_BTN_H, labels[i], i == 3 ? C_PURPLE : i == 4 ? C_LINE : C_CARD, C_WHITE);
+  } else if (petMenu == MENU_CARE) {
+    const char* labels[] = {"Clean", "Meds", pet.lightsOff ? "Light on" : "Light", "Back"};
+    for (int i = 0; i < 4; i++) drawButton(4 + i * 79, PET_BTN_Y, 75, PET_BTN_H, labels[i], i == 3 ? C_LINE : C_CARD, C_WHITE);
+  } else if (petMenu == MENU_TRICKS) {
+    for (int i = 0; i < 4; i++) {
+      bool ok = i < tricksUnlocked();
+      drawButton(4 + i * 63, PET_BTN_Y, 59, PET_BTN_H, ok ? String(trickName(i)) : "Lv " + String(TRICK_LEVEL[i]),
+                 ok ? C_CARD : mix(theme().card, 0x000000, 0.3f), ok ? C_WHITE : C_DIM);
+    }
+    drawButton(256, PET_BTN_Y, 60, PET_BTN_H, "Back", C_LINE, C_WHITE);
+  } else if (petMenu == MENU_MINI) {
+    const char* labels[] = {"Treats", "Mice", "Memory"};
+    for (int i = 0; i < 3; i++) {
+      bool ok = miniGameUnlocked(i);
+      drawButton(4 + i * 79, PET_BTN_Y, 75, PET_BTN_H, ok ? String(labels[i]) : "Lv " + String(MINIGAME_LEVEL[i]),
+                 ok ? C_CARD : mix(theme().card, 0x000000, 0.3f), ok ? C_WHITE : C_DIM);
+    }
+    drawButton(241, PET_BTN_Y, 75, PET_BTN_H, "Back", C_LINE, C_WHITE);
   } else if (petMenu == MENU_GAME) {
     drawButton(4, PET_BTN_Y, 150, PET_BTN_H, "< Left", C_CARD, C_WHITE);
     drawButton(166, PET_BTN_Y, 150, PET_BTN_H, "Right >", C_CARD, C_WHITE);
   } else {
-    const char* labels[] = {"Feed", "Play", "Clean", "Meds", pet.lightsOff ? "Light on" : "Light"};
-    for (int i = 0; i < 5; i++) drawButton(4 + i * 63, PET_BTN_Y, 59, PET_BTN_H, labels[i], C_CARD, C_WHITE);
+    const char* labels[] = {"Feed", "Play", "Care", "Adventure", "Bag"};
+    const int xs[] = {4, 61, 118, 175, 260}, ws[] = {53, 53, 53, 81, 56};
+    for (int i = 0; i < 5; i++) {
+      bool hot = i == 3 && (rpg.boxes > 0 || rpg.reportPending);
+      drawButton(xs[i], PET_BTN_Y, ws[i], PET_BTN_H, labels[i], i == 3 ? (hot ? C_AMBER : C_PURPLE) : C_CARD,
+                 hot ? RGB565(40, 24, 0) : C_WHITE);
+    }
   }
 }
 
 void drawPetPage() {
+  petPageOpened();
+  if (petFullScreen()) {
+    drawPetScreen();
+    return;
+  }
+  if (petSpecialScene()) {
+    specialSceneFrame();
+    drawSpecialButtons();
+    return;
+  }
   petFrame();
   drawPetButtons();
 }
@@ -558,23 +689,40 @@ void finishLaser() {
   if (pet.happy < 4) pet.happy++;
   if (pet.weight > 5) pet.weight--;
   petSay("That was fun!", 2500);
+  careXp(15);
+  questEvent(Q_PLAY, 1);
   petAfterAction();
 }
 
 bool petTap(int x, int y) {
+  if (petFullScreen()) {
+    petScreenTap(x, y);
+    return true;
+  }
+  if (petSpecialScene()) {
+    specialTap(x, y);
+    return true;
+  }
   if (y < PET_BTN_Y - 8) {
-    bool cat = cfg.petType == 1;
+    if (missionActive()) {  // check on the trip
+      openPetMenu(MENU_MISSIONS);
+      return true;
+    }
+    bool roams = cfg.petType >= SP_CAT;
     // Laser pointer: the red dot goes where you tap
-    if (cat && petMenu == MENU_LASER) {
+    if (cfg.petType == SP_CAT && petMenu == MENU_LASER) {
       laserX = x;
       laserY = y - PET_SCENE_Y;
       return true;
     }
     // A tap on the pet itself: a little pat
-    bool onPet = cat ? fabs(x - catX) < 50 : (x > 100 && x < 220);
+    bool onPet = roams ? fabs(x - catX) < 50 : (x > 100 && x < 220);
     if (petIsAlive() && !pet.asleep && onPet) {
-      if (cat) catOnTap();
+      if (cfg.petType == SP_CAT) catOnTap();
+      else if (roams) petSay(speciesSound(cfg.petType), 1500);
       else petSay("Hehe!", 1500);
+      careXp(2);
+      questEvent(Q_STROKE, 1);
       return true;
     }
     return false;  // elsewhere flips the page
@@ -597,26 +745,67 @@ bool petTap(int x, int y) {
   }
 
   int col = x * 5 / W;           // which of 5 buttons
+  int quarter = x * 4 / W;       // which of 4 buttons
   int third = x < 107 ? 0 : x < 213 ? 1 : 2;  // which of 3 buttons
   if (petMenu == MENU_MAIN) {
-    if (col == 0) petMenu = MENU_FEED;
-    if (col == 1) petMenu = MENU_PLAY;
-    if (col == 2) {
-      if (pet.poops) petSay("All clean!", 2000);
-      else petSay("Already clean", 1500);
+    if (x < 57) petMenu = MENU_FEED;
+    else if (x < 114) petMenu = MENU_PLAY;
+    else if (x < 171) petMenu = MENU_CARE;
+    else if (x < 258) {
+      openPetMenu(rpg.reportPending ? MENU_REPORT : MENU_HUB);
+      return true;
+    } else {
+      openPetMenu(MENU_BAG);
+      return true;
+    }
+    petAfterAction();
+    return true;
+  }
+  if (petMenu == MENU_CARE) {
+    if (quarter == 0) {
+      if (pet.poops) {
+        petSay("All clean!", 2000);
+        careXp(10);
+        questEvent(Q_CLEAN, 1);
+      } else {
+        petSay("Already clean", 1500);
+      }
       pet.poops = 0;
     }
-    if (col == 3) {
+    if (quarter == 1) {
       if (pet.sick) {
         pet.sick--;
         petSay(pet.sick ? "One more dose" : "Feeling better!", 2000);
+        careXp(10);
       } else {
         petSay("I'm not ill!", 1500);
       }
     }
-    if (col == 4) {
+    if (quarter == 2) {
       pet.lightsOff = !pet.lightsOff;
       if (!pet.asleep && pet.lightsOff) petSay("I'm not sleepy!", 1500);
+    }
+    if (quarter == 3) petMenu = MENU_MAIN;
+    petAfterAction();
+    return true;
+  }
+  if (petMenu == MENU_TRICKS) {
+    if (col >= 4) petMenu = MENU_MAIN;
+    else petSay(startTrick(col), 2500);
+    petAfterAction();
+    return true;
+  }
+  if (petMenu == MENU_MINI) {
+    if (quarter >= 3) {
+      petMenu = MENU_MAIN;
+    } else if (!miniGameUnlocked(quarter)) {
+      petSay(startMiniGame(quarter), 2500);
+    } else if (pet.asleep) {
+      petSay("Shh... sleeping", 1500);
+    } else {
+      petSay(startMiniGame(quarter), 2000);
+      openPetMenu(MENU_MINIGAME);
+      return true;
     }
     petAfterAction();
     return true;
@@ -632,26 +821,34 @@ bool petTap(int x, int y) {
         pet.hunger++;
         pet.weight++;
         petSay("Yum!", 1500);
+        careXp(10);
+        questEvent(Q_FEED, 1);
       }
     } else {
       if (pet.happy < 4) pet.happy++;
       pet.weight += 2;
       petSay("Sweet!", 1500);
+      careXp(5);
+      questEvent(Q_FEED, 1);
     }
     petAfterAction();
     return true;
   }
   if (petMenu == MENU_PLAY) {
-    if (third == 2) {
+    if (col == 4) {
       petMenu = MENU_MAIN;
+    } else if (col == 1) {
+      petMenu = MENU_MINI;
+    } else if (col == 2) {
+      petMenu = MENU_TRICKS;
     } else if (pet.asleep) {
       petSay("Shh... sleeping", 1500);
-    } else if (third == 0 && cfg.petType == 1) {
+    } else if (col == 0 && cfg.petType == SP_CAT) {
       petMenu = MENU_LASER;
       laserX = laserY = -1;
       laserUntil = millis() + 30000;
       petSay("Tap anywhere for the laser!", 3000);
-    } else if (third == 0) {
+    } else if (col == 0) {
       petMenu = MENU_GAME;
       gameRound = gameWins = 0;
       petFacing = 0;
@@ -676,6 +873,8 @@ bool petTap(int x, int y) {
       if (gameWins >= 3 && pet.happy < 4) pet.happy++;
       if (gameWins == 5 && pet.happy < 4) pet.happy++;
       if (pet.weight > 5) pet.weight--;
+      careXp(15 + gameWins * 3);
+      questEvent(Q_PLAY, 1);
       petSay(String(gameWins) + " out of 5! " + (gameWins >= 3 ? "Fun!" : "Again?"), 3000);
       petAfterAction();
     }

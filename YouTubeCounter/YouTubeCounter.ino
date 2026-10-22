@@ -1,7 +1,8 @@
 /*
   ============================================================
    YouTube Counter  -  version 2
-   for the ESP32 "Cheap Yellow Display" (ESP32-2432S028R)
+   for the Elecrow CrowPanel Advance 7" (ESP32-S3) or the ESP32
+   "Cheap Yellow Display" 2.8" (ESP32-2432S028R)
   ============================================================
 
   Shows your YouTube channel's stats, plus a clock, weather and crypto prices,
@@ -21,7 +22,10 @@
   Libraries needed (Arduino IDE > Tools > Manage Libraries...):
     - LovyanGFX    (by lovyan03)
     - ArduinoJson  (by Benoit Blanchon)
-  Board: "ESP32 Dev Module", Partition scheme: "Minimal SPIFFS (1.9MB APP with OTA)"
+  7" board:   use flash.ps1 ("ESP32S3 Dev Module", PSRAM: "OPI PSRAM", Flash size: 16MB,
+              Partition scheme: "ESP SR 16M", USB CDC On Boot: Disabled)
+  2.8" board: "ESP32 Dev Module", Partition scheme: "Minimal SPIFFS (1.9MB APP with OTA)"
+  The program picks the right screen by itself from the board type.
 */
 
 #include "app.h"
@@ -44,7 +48,8 @@
 #include <mbedtls/base64.h>
 #include <time.h>
 
-CheapYellowDisplay tft;
+BoardDisplay       lcd;
+Screen             tft(&lcd, SCREEN_SCALE, SCREEN_OFFSET_X, 0);  // pages draw through this
 Preferences        prefs;
 WiFiClientSecure   tls;
 WebServer          server(80);
@@ -81,13 +86,15 @@ WarningInfo  warnings;
 JokeInfo     joke;
 SpotifyInfo  spotify;
 AnalyticsInfo analytics;
+PetRpg       rpg;          // the pet's levels, items and adventures
+VideoCheckpoint checkpoints[CHECKPOINT_VIDEOS];  // views of recent videos at set ages
 
 // Friendship lamp: when your brother sends a glow, the screen glows until this time
 unsigned long lampGlowUntil = 0;
 String        lampFrom;
 
 // A memory canvas for smooth animation (aquarium, pet). Made only when needed.
-LGFX_Sprite  canvas(&tft);
+GfxSprite    canvas(&tft);
 
 unsigned long lastInteraction = 0;  // last tap on a page's buttons
 bool          keyboardOpen = false;
@@ -108,6 +115,7 @@ SetupReason   setupReason = SETUP_FIRST_TIME;
 unsigned long setupStartedAt = 0;
 unsigned long restartAt = 0;
 String        scannedNetworks;
+unsigned long lastPortalActivity = 0;  // last time the settings page was used
 
 // What's on the screen
 int           currentPage = -1;
@@ -132,6 +140,7 @@ unsigned long nextAir = 0, nextWarnings = 0, nextJoke = 0, nextSpotify = 0, next
 void setup() {
   Serial.begin(115200);
 
+#if !BOARD_7INCH
   pinMode(LED_PIN_RED, OUTPUT);
   pinMode(LED_PIN_GREEN, OUTPUT);
   pinMode(LED_PIN_BLUE, OUTPUT);
@@ -139,20 +148,28 @@ void setup() {
   digitalWrite(LED_PIN_GREEN, HIGH);
   digitalWrite(LED_PIN_BLUE, HIGH);
   pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
+#endif
 
   prefs.begin("subcounter", false);
   loadSettings();
   applyTheme();
   loadHistory();
+  loadRpg();  // early, so the settings page knows what the pet has unlocked
 
   uint64_t mac = ESP.getEfuseMac();
   char name[24];
   snprintf(name, sizeof(name), "subcounter-%02x%02x", (uint8_t)(mac >> 32), (uint8_t)(mac >> 40));
   hostName = name;
 
-  tft.configure(cfg.screenType);
-  tft.init();
-  tft.setRotation(1);
+#if BOARD_7INCH
+  lcd.configure(cfg.boardRev);
+  lcd.init();
+  tft.touchPollMs = TOUCH_POLL_MS;
+#else
+  lcd.configure(cfg.screenType);
+  lcd.init();
+  lcd.setRotation(1);
+#endif
   tft.setBrightness(cfg.brightness);
   shownBrightness = cfg.brightness;
   fillScreenBg();
@@ -185,6 +202,7 @@ void setup() {
   loadFuelHistory();
   loadInbox();
   loadPet();
+  loadCheckpoints();
 
   // The first time it runs, line the touch screen up so buttons work
   if (!touchCalibrated || prefs.getBool("calNext", false)) {
@@ -258,7 +276,7 @@ void loop() {
     highlighted = false;
     if (currentPage == PAGE_SUBS && !infoShowing) drawCurrentPage();
   }
-  if (infoShowing && millis() - infoShownAt > 15000 && !touchDown()) {
+  if (infoShowing && (long)(millis() - infoShownAt) > 15000 && !touchDown()) {
     infoShowing = false;
     drawCurrentPage();
   }
@@ -299,6 +317,10 @@ void runSchedule() {
     }
     if (channel.loaded && due(nextUploads)) {
       bool ok = updateUploads();
+      if (ok) {
+        rpgOnUploads();
+        updateCheckpoints();
+      }
       bool liveNow = liveIndex() >= 0;
       nextUploads = now + (ok ? (liveNow ? 60 : 300) : 60) * 1000UL;
       if (ok && !comment.loaded) nextComment = now;
@@ -448,6 +470,7 @@ void celebrate() {
   highlighted = true;
   highlightUntil = millis() + 15000;
   petCelebrate();
+  rpgOnSubsUp();
   if (currentPage != PAGE_SUBS && !userBusy()) showPage(PAGE_SUBS);
   if (cfg.ledFlash) flashLed(0, 255, 0, 3);
 }
@@ -463,9 +486,11 @@ void flashLed(int r, int g, int b, int times) {
 }
 
 void setLed(int r, int g, int b) {
+#if !BOARD_7INCH  // the 7" board has no light on the back
   digitalWrite(LED_PIN_RED, r > 127 ? LOW : HIGH);
   digitalWrite(LED_PIN_GREEN, g > 127 ? LOW : HIGH);
   digitalWrite(LED_PIN_BLUE, b > 127 ? LOW : HIGH);
+#endif
 }
 
 // ---------------------------------------------------------------- pages
@@ -504,6 +529,7 @@ bool pageHasData(int page) {
     case PAGE_JOKE:        return joke.loaded;
     case PAGE_SPOTIFY:     return spotify.loaded && spotify.playing;
     case PAGE_ANALYTICS:   return analytics.loaded || (cfg.googleToken.length() && analytics.problem.length());
+    case PAGE_REPORT:      return reportAvailable();
   }
   return false;
 }
@@ -617,7 +643,8 @@ void handleTouchAndButton() {
     moved += abs((int)(x - lastX));
     lastX = x;
     // Sliding across the cat strokes it
-    if (armed && moved > 30 && cfg.petType == 1 && currentPage == PAGE_PET && !keyboardOpen &&
+    if (armed && moved > 30 && cfg.petType >= SP_CAT && currentPage == PAGE_PET && !keyboardOpen &&
+        !petFullScreen() && !petSpecialScene() &&
         y > PET_SCENE_Y && y < PET_BTN_Y && now - lastStroke > 300) {
       catStroke();
       stroked = true;
@@ -635,12 +662,14 @@ void handleTouchAndButton() {
   if (!down) armed = true;  // ignore a touch that was already down at start
   wasDown = down;
 
+#if !BOARD_7INCH  // on the 7" board that pin drives the screen
   if (digitalRead(BOOT_BUTTON_PIN) == LOW) {
     if (bootDownAt == 0) bootDownAt = now;
     if (now - bootDownAt >= 3000) requestSetupMode();
   } else {
     bootDownAt = 0;
   }
+#endif
 }
 
 void onTap(int x, int y) {
@@ -714,7 +743,7 @@ void animatePage() {
   int interval = currentPage == PAGE_SCREENSAVER ? 40
                : currentPage == PAGE_STOPWATCH   ? 100
                : currentPage == PAGE_MOODLAMP    ? 50
-               : currentPage == PAGE_PET         ? 250
+               : currentPage == PAGE_PET         ? petAnimInterval()
                : currentPage == PAGE_EIGHTBALL   ? 60
                : currentPage == PAGE_SPOTIFY     ? 1000 : 0;
   if (!interval || now - last < (unsigned long)interval) return;
@@ -740,6 +769,7 @@ void everyMinute() {
   applyBrightness();
   recordHistory();  // starts a new day's snapshot just after midnight
   petMinute();
+  rpgMinute();
 
   // The pet calls for you when it needs something
   static unsigned long lastPetCall = 0;

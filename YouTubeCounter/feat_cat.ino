@@ -148,11 +148,21 @@ void catOnTap() {
   if (catHabit == H_NAP) catStartHabit(H_YAWN, 2500);
 }
 
-// Stroking (sliding a finger across it) makes it purr
+// Stroking (sliding a finger across it) makes it purr - or wag, or wiggle
 void catStroke() {
-  if (pet.asleep || !petIsAlive()) return;
-  if (catHabit != H_PURR) petSay("Purrrrr...", 2500);
+  if (pet.asleep || !petIsAlive() || trickActive()) return;
+  if (catHabit != H_PURR) {
+    const char* says = cfg.petType == SP_CAT ? "Purrrrr..." : cfg.petType == SP_DOG ? "*happy wag*" :
+                       cfg.petType == SP_HAMSTER ? "*happy squeak*" : "*rumbly purr*";
+    petSay(says, 2500);
+  }
   catStartHabit(H_PURR, 3000);
+  static unsigned long lastStrokeXp = 0;
+  if (millis() - lastStrokeXp > 20000) {
+    lastStrokeXp = millis();
+    careXp(3);
+    questEvent(Q_STROKE, 1);
+  }
   if (millis() - lastStrokeBonus > 120000 && pet.happy < 4) {
     pet.happy++;
     lastStrokeBonus = millis();
@@ -165,7 +175,7 @@ void catStroke() {
 // Draws the cat and its props for one frame. floorY is the top of the floor strip.
 void drawCatScene(int floorY, bool dark) {
   unsigned long now = millis();
-  int s = pet.stage == PET_BABY ? 4 : pet.stage == PET_CHILD ? 5 : 6;
+  int s = petPixelSize();
   bool shut = pet.asleep;
 
   if (petMenu == MENU_LASER && millis() > laserUntil) finishLaser();
@@ -173,6 +183,11 @@ void drawCatScene(int floorY, bool dark) {
     drawCatSprite(CAT_BASKET, W / 2 - 8 * 6, floorY - 15 * 6, 6, false, true, dark ? 0.6f : 0);
     return;
   }
+  if (trickActive()) {
+    drawTrickFrame((int)catX, floorY, dark ? 0.6f : 0);
+    return;
+  }
+  if (catHabit == H_TRICK) catHabitUntil = 0;  // trick over: pick something new
 
   if (pet.asleep) {
     catHabit = H_NAP;
@@ -259,6 +274,11 @@ void drawCatScene(int floorY, bool dark) {
     canvas.fillCircle(laserX, laserY, 3, RGB565(255, 40, 40));
   }
 
+  // An evolved cat glows; its cape or wings go behind it
+  bool sittingNow = !moving && (catHabit == H_SIT || catHabit == H_GROOM || catHabit == H_BLINK || catHabit == H_PURR);
+  if (petEvolved() && !pet.asleep) drawEvolveAura((int)catX, sitY + 8 * s, 10 * s);
+  if (sittingNow) drawGear(x0, sitY, s, true);
+
   // The cat itself
   switch (catHabit) {
     case H_NAP:
@@ -316,7 +336,7 @@ void drawCatScene(int floorY, bool dark) {
 // ---------------------------------------------------------------- strolling across other pages
 
 const int WANDER_Y = 176, WANDER_H = 50;
-LGFX_Sprite   wanderBg(&tft);
+GfxSprite     wanderBg(&tft);
 bool          wandering = false;
 float         wanderX = 0;
 int           wanderDir = 1;
@@ -392,7 +412,7 @@ void wanderFrame() {
   bool sitting = wanderPaused && now < wanderPauseUntil;
   if (!sitting) wanderX += wanderDir * 3.2f;
 
-  memcpy(canvas.getBuffer(), wanderBg.getBuffer(), W * WANDER_H * 2);
+  memcpy(canvas.getBuffer(), wanderBg.getBuffer(), wanderBg.bufferLength());
   const int s = 3;
   int x0 = (int)wanderX - 8 * s;
   if (sitting) {

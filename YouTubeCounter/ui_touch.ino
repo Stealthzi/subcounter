@@ -1,10 +1,54 @@
 // Touch screen line-up, on-screen buttons and the keyboard for typing messages
 
+#if BOARD_7INCH
+
+// The 7" touch panel is accurate already; it only needs to know which way round it is
+void loadTouchCalibration() {
+  if (prefs.isKey("tflip")) {
+    tft.touchFlip = prefs.getUChar("tflip", 0);
+    touchCalibrated = true;
+  }
+}
+
+// Tap the dot in the top left. If the touch lands in the wrong corner, that
+// direction is swapped from then on. Carries on after 30 seconds untouched.
+void runTouchCalibration() {
+  fillScreenBg();
+  tft.fillSmoothCircle(30, 30, 12, C_ACCENT);
+  tft.fillSmoothCircle(30, 30, 5, C_WHITE);
+  tft.setTextSize(1);
+  tft.setFont(F_BOLD);
+  tft.setTextDatum(D_MC);
+  tft.setTextColor(C_WHITE);
+  tft.drawString("Tap the dot in the top corner", W / 2, H / 2 - 10);
+  tft.setFont(F_SMALL);
+  tft.setTextColor(C_GREY);
+  tft.drawString("This checks which way round the touch screen is", W / 2, H / 2 + 16);
+
+  unsigned long start = millis();
+  int32_t x = 0, y = 0;
+  while (tft.rawTouch(&x, &y) <= 0) {
+    if (millis() - start > 30000) return;
+    delay(20);
+  }
+  uint8_t flip = 0;
+  if (x > lcd.width() / 2) flip |= 1;
+  if (y > lcd.height() / 2) flip |= 2;
+  tft.touchFlip = flip;
+  prefs.putUChar("tflip", flip);
+  touchCalibrated = true;
+  while (touchDown()) delay(20);
+  showMessage("Touch screen ready", "", "");
+  delay(800);
+}
+
+#else
+
 void loadTouchCalibration() {
   uint16_t cal[8];
   if (prefs.getBytesLength("tcal") == sizeof(cal)) {
     prefs.getBytes("tcal", cal, sizeof(cal));
-    tft.setTouchCalibrate(cal);
+    lcd.setTouchCalibrate(cal);
     touchCalibrated = true;
   }
 }
@@ -32,12 +76,14 @@ void runTouchCalibration() {
   tft.setTextColor(C_GREY);
   tft.drawString("Use the stylus for the best result", W / 2, H / 2 + 16);
   uint16_t cal[8];
-  tft.calibrateTouch(cal, C_WHITE, C_BG, 15);
+  lcd.calibrateTouch(cal, C_WHITE, C_BG, 15);
   prefs.putBytes("tcal", cal, sizeof(cal));
   touchCalibrated = true;
   showMessage("Touch screen ready", "", "");
   delay(800);
 }
+
+#endif
 
 // ---------------------------------------------------------------- buttons
 

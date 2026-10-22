@@ -73,6 +73,15 @@ String fitText(const String& text, int maxWidth) {
   return t + "...";
 }
 
+// The same, measured with another drawing surface's font (e.g. the canvas)
+String fitTextIn(Gfx& g, const String& text, int maxWidth) {
+  if (g.textWidth(text.c_str()) <= maxWidth) return text;
+  String t = text;
+  while (t.length() > 0 && g.textWidth((t + "...").c_str()) > maxWidth) t.remove(t.length() - 1);
+  t.trim();
+  return t + "...";
+}
+
 // Word-wraps text into up to maxLines lines; returns how many lines it used
 int drawWrapped(const String& text, int x, int y, int maxWidth, int maxLines, int lineHeight) {
   tft.setTextDatum(D_TL);
@@ -201,6 +210,16 @@ void fillBg(int x, int y, int w, int h) {
 
 void fillScreenBg() {
   fillBg(0, 0, W, H);
+  drawSides();
+}
+
+// On the 7" screen the page sits in the middle; the strips either side match
+// the background, with the title bar's line carried across
+void drawSides() {
+  if (tft.ox <= 0) return;
+  tft.fillSides(bgAt);
+  lcd.fillRect(0, tft.Y(33), tft.ox, tft.s, C_LINE);
+  lcd.fillRect(lcd.width() - tft.ox, tft.Y(33), tft.ox, tft.s, C_LINE);
 }
 
 // Draws text with a left-to-right colour gradient, like a styled display name.
@@ -247,7 +266,7 @@ uint16_t statusColour() {
 
 // Each section of pages has its own colour and title
 bool isYouTubePage(int page) {
-  return page <= PAGE_LIVE || page == PAGE_ANALYTICS;
+  return page <= PAGE_LIVE || page == PAGE_ANALYTICS || page == PAGE_REPORT;
 }
 
 uint16_t pageColour(int page) {

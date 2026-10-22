@@ -53,6 +53,11 @@ void loadSettings() {
   cfg.googleToken     = prefs.getString("gtoken", "");
   cfg.theme           = prefs.getUChar("theme", 0);
   cfg.petType         = prefs.getUChar("pettype", 0);
+  cfg.boardRev        = prefs.getUChar("boardrev", 13);
+  cfg.openaiKey       = prefs.getString("aikey", "");
+  cfg.aiModel         = prefs.getString("aimodel", "gpt-6-luna");
+  cfg.aiShare         = prefs.getUChar("aishare", AI_DEFAULT_SHARE);
+  cfg.aiOnScreen      = prefs.getBool("aiscr", true);
   if (cfg.theme >= THEME_COUNT) cfg.theme = 0;
 
   if (cfg.refreshSecs < 15) cfg.refreshSecs = 15;
@@ -114,6 +119,11 @@ void saveSettings() {
   prefs.putString("gtoken", cfg.googleToken);
   prefs.putUChar("theme", cfg.theme);
   prefs.putUChar("pettype", cfg.petType);
+  prefs.putUChar("boardrev", cfg.boardRev);
+  prefs.putString("aikey", cfg.openaiKey);
+  prefs.putString("aimodel", cfg.aiModel);
+  prefs.putUChar("aishare", cfg.aiShare);
+  prefs.putBool("aiscr", cfg.aiOnScreen);
 }
 
 // Each counter starts with its own random pairing code for messages. Called once
