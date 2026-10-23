@@ -9,7 +9,7 @@ You set it up from your phone, so there's no code to edit. It updates itself ove
 
 ## What it shows
 
-The pages change every 10 seconds. **Tap the screen** to skip to the next one, and use the buttons on the interactive pages. You can switch every page on or off in Settings, and pages that need setting up only appear once they're set up.
+The pages change every 10 seconds, or never if you'd rather it stayed on one page (Settings > "Each page shows for" > "Never change by itself"; it then remembers the page you picked, even after a restart). On the 7" screen, use the **arrows** either side to go back and forward. On the 2.8" screen, **tap** an empty part of the page to go to the next one. You can switch every page on or off in Settings, and pages that need setting up only appear once they're set up.
 
 | Section | Pages |
 |---|---|
@@ -23,7 +23,8 @@ The pages change every 10 seconds. **Tap the screen** to skip to the next one, a
 **Seasonal decorations** appear at Christmas, Halloween, New Year, Valentine's and Easter, and the pet dresses up for them too.
 
 **Buttons:**
-- **Tap:** next page, or press a button on the page. At night, a tap lights the screen up for 30 seconds.
+- **Arrows (7"):** the page before or after. **Tap (2.8"):** the next page. Either way, buttons on a page work as normal, and at night a tap lights the screen up for 30 seconds.
+- **Mood lamp:** tap the middle to change the colour.
 - **Hold for 2 seconds:** info screen, showing the version, WiFi signal, any problems and the **settings page address**.
 - **Hold for 8 seconds:** setup mode. On the 2.8" board, holding the **BOOT** button on the back for 3 seconds does the same.
 - **Hold a finger on the screen while plugging it in:** setup mode.
@@ -267,3 +268,4 @@ Your WiFi password, API keys, sign-in passes and pairing code are only stored on
 - **YouTube rounds public subscriber counts.** Above 1,000 you get the first 3 digits, so at 800,000 it moves in steps of 1,000. The **Exact stats** page uses your own YouTube Analytics data, which is exact but a day or two behind.
 - **Today, this week, the chart and the petrol trend fill in over time.** The counter keeps a snapshot each day and remembers it through restarts and updates.
 - **Prices:** petrol prices come from checkfuelprices.co.uk, weather and air quality from Open-Meteo, and crypto from CoinGecko. All are free, with no account needed.
+- **The 7" screen and its memory.** The board's picture memory (PSRAM) can only just keep up with feeding an 800x480 screen, so busy drawing can make the picture slip for a frame. To keep it steady, animations (the pet, screensaver and 8-ball) are drawn at half size in the chip's fast memory and doubled up on screen, which makes text inside them a little chunkier. For anyone working on the code, `screen_watch.h` counts lost frames; type `s` in the serial monitor at 115200 baud to see them.

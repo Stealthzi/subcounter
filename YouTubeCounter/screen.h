@@ -162,15 +162,72 @@ public:
 
   void setColorDepth(int bits) { sprite.setColorDepth(bits); }
   void* createSprite(int w, int h) {
+    s = parent->s;
+    _lowRes = false;
 #if BOARD_7INCH
     sprite.setPsram(true);
 #endif
     return sprite.createSprite(w * s, h * s);
   }
+  // 7": draw at the page grid's size in fast internal memory, and double it
+  // up on the way to the screen. Drawing into a full-size canvas in PSRAM
+  // makes so much PSRAM traffic that the screen loses frames.
+  void* createLowRes(int w, int h) {
+    if (parent->s == 1) return createSprite(w, h);
+    s = 1;
+    _lowRes = true;
+    sprite.setPsram(false);
+    void* buf = sprite.createSprite(w, h);
+    if (!buf) createSprite(w, h);  // no room: the old way
+    return sprite.getBuffer();
+  }
+  bool lowRes() const { return _lowRes; }
   void deleteSprite() { sprite.deleteSprite(); }
-  void pushSprite(int x, int y) { sprite.pushSprite(parent->d, parent->X(x), parent->Y(y)); }
+  void pushSprite(int x, int y) {
+    if (_lowRes) pushDoubled(parent->X(x), parent->Y(y));
+    else sprite.pushSprite(parent->d, parent->X(x), parent->Y(y));
+  }
   void* getBuffer() { return sprite.getBuffer(); }
   uint32_t bufferLength() const { return sprite.bufferLength(); }
+
+private:
+  bool _lowRes = false;
+  uint16_t* _line = nullptr;  // one doubled-up line, in fast memory
+  int _lineCap = 0;
+
+  // Each canvas pixel becomes a k x k block on the screen, written one
+  // straight line at a time (a steady stream PSRAM copes with fine)
+  void pushDoubled(int dx, int dy) {
+    int w = sprite.width(), h = sprite.height(), k = parent->s;
+    int bits = sprite.getColorDepth() & 0xFF;
+    if (bits != 8 && bits != 16) return;
+    if (_lineCap < w * k) {
+      free(_line);
+      _line = (uint16_t*)heap_caps_malloc(w * k * 2, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+      _lineCap = _line ? w * k : 0;
+      if (!_line) return;
+    }
+    const uint8_t* buf = (const uint8_t*)sprite.getBuffer();
+    parent->d->startWrite();
+    for (int row = 0; row < h; row++) {
+      for (int i = 0; i < w; i++) {
+        uint16_t c;
+        if (bits == 8) {
+          uint8_t v = buf[row * w + i];  // RRRGGGBB
+          uint16_t r = v >> 5, g = (v >> 2) & 7, b = v & 3;
+          c = (uint16_t)(((r << 2 | r >> 1) << 11) | ((g << 3 | g) << 5) | (b << 3 | b << 1 | b >> 1));
+        } else {
+          uint16_t v = ((const uint16_t*)buf)[row * w + i];  // stored byte-swapped
+          c = (uint16_t)(v << 8 | v >> 8);
+        }
+        for (int j = 0; j < k; j++) _line[i * k + j] = c;
+      }
+      for (int j = 0; j < k; j++) {
+        parent->d->pushImage(dx, dy + row * k + j, w * k, 1, (const lgfx::rgb565_t*)_line);
+      }
+    }
+    parent->d->endWrite();
+  }
 };
 
 // The real screen, plus its touch panel and backlight
@@ -179,6 +236,8 @@ public:
   lgfx::LGFX_Device* dev;
   uint8_t touchFlip = 0;            // 7" only: 1 = left/right swapped, 2 = up/down swapped
   unsigned long touchPollMs = 0;    // read the touch panel at most this often (0 = every time)
+  int8_t touchSide = 0;             // 7" only: -1 = finger in the left strip, 1 = right strip, 0 = on the page
+  bool touchPaused = false;         // for testing over USB: stop reading the touch panel
 
   Screen(lgfx::LGFX_Device* device, int scale, int offX, int offY)
     : Gfx(device, scale, offX, offY), dev(device) {}
@@ -189,6 +248,7 @@ public:
   int getTouch(int32_t* x, int32_t* y) {
     int32_t px = 0, py = 0;
     int n = readTouch(&px, &py);
+    touchSide = 0;
     if (n <= 0 || s == 1) {
       *x = px;
       *y = py;
@@ -196,6 +256,8 @@ public:
     }
     if (touchFlip & 1) px = dev->width() - 1 - px;
     if (touchFlip & 2) py = dev->height() - 1 - py;
+    if (px < ox) touchSide = -1;
+    else if (px >= ox + W * s) touchSide = 1;
     *x = constrain((px - ox) / s, 0, W - 1);
     *y = constrain((py - oy) / s, 0, H - 1);
     return n;
@@ -210,6 +272,7 @@ private:
   int32_t _lastX = 0, _lastY = 0;
 
   int readTouch(int32_t* x, int32_t* y) {
+    if (touchPaused) return 0;
     if (touchPollMs && millis() - _lastRead < touchPollMs) {
       *x = _lastX;
       *y = _lastY;

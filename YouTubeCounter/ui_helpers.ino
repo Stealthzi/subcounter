@@ -220,6 +220,24 @@ void drawSides() {
   tft.fillSides(bgAt);
   lcd.fillRect(0, tft.Y(33), tft.ox, tft.s, C_LINE);
   lcd.fillRect(lcd.width() - tft.ox, tft.Y(33), tft.ox, tft.s, C_LINE);
+  drawNavArrows();
+}
+
+// 7" only: a back arrow and a forward arrow in the strips either side of the page
+void drawNavArrows() {
+  drawNavArrowsIn(C_GREY, C_CARD);
+}
+
+void drawNavArrowsIn(uint16_t arrow, uint16_t button) {
+  if (tft.ox <= 0 || currentPage < 0 || keyboardOpen) return;
+  int cy = lcd.height() / 2;
+  for (int side = -1; side <= 1; side += 2) {
+    int cx = side < 0 ? tft.ox / 2 : lcd.width() - tft.ox / 2;
+    lcd.fillSmoothCircle(cx, cy, 28, button);
+    int tip = cx + side * 7, back = cx - side * 7;
+    lcd.drawWideLine(back, cy - 13, tip, cy, 3, arrow);
+    lcd.drawWideLine(tip, cy, back, cy + 13, 3, arrow);
+  }
 }
 
 // Draws text with a left-to-right colour gradient, like a styled display name.
@@ -312,17 +330,11 @@ const char* pageTitle(int page) {
 void drawHeader() {
   fillBg(0, 0, W, 34);
 
-  // Right side: unread messages, clock, status dot
-  struct tm t;
-  String clock = getLocalTime(&t, 0) ? clockText(t) : "";
+  // Right side: unread messages and the status dot (no clock - it's on the Clock page if wanted)
   tft.setFont(F_SMALL);
   tft.setTextSize(1);
-  int clockW = tft.textWidth(clock.c_str());
-  tft.setTextDatum(D_MR);
-  tft.setTextColor(C_GREY);
-  tft.drawString(clock.c_str(), W - 20, 18);
   tft.fillSmoothCircle(W - 9, 18, 4, statusColour());
-  int rightEdge = W - 26 - clockW;
+  int rightEdge = W - 20;
   if (unreadCount > 0) {
     tft.fillSmoothRoundRect(rightEdge - 22, 10, 20, 16, 4, C_PURPLE);
     tft.setTextDatum(D_MC);

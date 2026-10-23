@@ -61,7 +61,7 @@ void loadSettings() {
   if (cfg.theme >= THEME_COUNT) cfg.theme = 0;
 
   if (cfg.refreshSecs < 15) cfg.refreshSecs = 15;
-  if (cfg.pageSecs < 3) cfg.pageSecs = 3;
+  if (cfg.pageSecs > 0 && cfg.pageSecs < 3) cfg.pageSecs = 3;  // 0 = never change page by itself
   if (cfg.brightness < 10) cfg.brightness = 10;
   if (cfg.pages == 0) cfg.pages = 1UL << PAGE_SUBS;
 }

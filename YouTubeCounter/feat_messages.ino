@@ -197,7 +197,7 @@ void pollMessages() {
 
   if (gotMessage) {
     if (cfg.ledFlash) flashLed(255, 0, 255, 3);
-    if (!userBusy() && !lampGlowing()) showPage(PAGE_MESSAGES);
+    if (!userBusy() && !lampGlowing() && autoPages()) showPage(PAGE_MESSAGES);
     else drawHeader();
   }
 }

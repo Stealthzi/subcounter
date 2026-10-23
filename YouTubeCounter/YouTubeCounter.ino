@@ -120,6 +120,16 @@ unsigned long lastPortalActivity = 0;  // last time the settings page was used
 // What's on the screen
 int           currentPage = -1;
 int           lastNormalPage = -1;
+int           wantPage = -1;           // with pages set to "Never": the page to go back to once it's ready
+unsigned long pagePickedAt = 0;        // when you last changed page by hand (saved a little later)
+volatile bool usbStatsOn = false;      // USB testing: print screen health (see usbDebug)
+bool lowResCanvas = BOARD_7INCH;       // 7": animations drawn at half size in fast memory (see ensureCanvas)
+volatile uint32_t loopPasses = 0;      // USB testing: shows the main loop is still running
+#if BOARD_7INCH && !SCREEN_BOUNCE
+ScreenWatch screenWatch;               // counts screen glitches (see screen_watch.h)
+extern volatile uint16_t writebackPieceKB, writebackGapUs;  // cache_writeback.cpp
+extern volatile uint32_t writebackCalls;
+#endif
 unsigned long pageShownAt = 0;
 bool          infoShowing = false;
 unsigned long infoShownAt = 0;
@@ -165,6 +175,19 @@ void setup() {
   lcd.configure(cfg.boardRev);
   lcd.init();
   tft.touchPollMs = TOUCH_POLL_MS;
+#if !SCREEN_BOUNCE
+  // 800 x 480 plus the blank edges (8 + 4 + 8 each way)
+  if (!screenWatch.begin(lcd.pixelClock(), (800 + 20) * (480 + 20))) Serial.println("Screen health check unavailable");
+#endif
+#if SCREEN_BOUNCE
+  Serial.printf("Screen: %s, refill by %s, free fast memory %u bytes\n",
+                lcd.screenBuffered() ? "buffered" : "direct", lcd.screenBus().refillName(),
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+  if (!lcd.screenBuffered()) {
+    Serial.printf("Screen buffers failed at: %s (error 0x%x)\n", lcd.screenBus().failedStep(),
+                  lcd.screenBus().failedCode());
+  }
+#endif
 #else
   lcd.configure(cfg.screenType);
   lcd.init();
@@ -173,11 +196,14 @@ void setup() {
   tft.setBrightness(cfg.brightness);
   shownBrightness = cfg.brightness;
   fillScreenBg();
+  bootStep("drawn");
   loadTouchCalibration();
+  bootStep("touch");
 
   bool wantSetup = prefs.getBool("setupNext", false);
   if (wantSetup) prefs.putBool("setupNext", false);
   if (!wantSetup && bootHoldForSetup()) wantSetup = true;
+  bootStep("hold check");
 
   if (!settingsComplete()) {
     startSetupMode(SETUP_FIRST_TIME);
@@ -191,6 +217,7 @@ void setup() {
     startSetupMode(SETUP_WIFI_FAILED);
     return;
   }
+  bootStep("wifi");
 
   ensurePairCode();
   configTzTime(cfg.tz.c_str(), "pool.ntp.org", "time.google.com");
@@ -212,6 +239,14 @@ void setup() {
 
   nextUpdateCheck = millis() + 3UL * 60 * 1000;
   showMessage("Loading your channel...", cfg.channel, "");
+  bootStep("ready");
+}
+
+// Start-up progress, printed over USB (helps find where a start-up stops)
+void bootStep(const char* step) {
+  Serial.print("Start-up: ");
+  Serial.println(step);
+  Serial.flush();
 }
 
 // Hold a finger on the screen while plugging in to open setup mode.
@@ -259,7 +294,9 @@ void loop() {
     return;
   }
 
+  loopPasses++;
   server.handleClient();
+  usbDebug();
   handleTouchAndButton();
   if (restartAt && due(restartAt)) ESP.restart();
   if (updateRequested) {
@@ -363,7 +400,7 @@ void runSchedule() {
     bool wasPlaying = spotify.playing;
     bool ok = updateSpotify();
     nextSpotify = now + (spotify.playing ? 15 : 60) * 1000UL;
-    if (ok && spotify.playing && !wasPlaying && currentPage != PAGE_SPOTIFY && !userBusy()) {
+    if (ok && spotify.playing && !wasPlaying && currentPage != PAGE_SPOTIFY && !userBusy() && autoPages()) {
       showPage(PAGE_SPOTIFY);  // something just started playing
     } else {
       onDataChanged(ok, PAGE_SPOTIFY);
@@ -443,6 +480,15 @@ void onDataChanged(bool ok, int page) {
     if (!ok && page == PAGE_SUBS) showMessage("Can't load your channel", lastError, "Trying again in 30 seconds...");
     return;
   }
+  // Staying on one page: after a restart, go back to the one you picked as soon
+  // as it has something to show (giving up after a couple of minutes)
+  if (currentPage < 0 && !autoPages()) wantPage = prefs.getUChar("homepg", PAGE_SUBS);
+  if (wantPage >= PAGE_COUNT || millis() > 120000) wantPage = -1;
+  if (wantPage >= 0 && pageAvailable(wantPage)) {
+    showPage(wantPage);
+    wantPage = -1;
+    return;
+  }
   if (currentPage < 0) {
     showPage(PAGE_SUBS);
     return;
@@ -471,7 +517,7 @@ void celebrate() {
   highlightUntil = millis() + 15000;
   petCelebrate();
   rpgOnSubsUp();
-  if (currentPage != PAGE_SUBS && !userBusy()) showPage(PAGE_SUBS);
+  if (currentPage != PAGE_SUBS && !userBusy() && autoPages()) showPage(PAGE_SUBS);
   if (cfg.ledFlash) flashLed(0, 255, 0, 3);
 }
 
@@ -586,6 +632,34 @@ void nextPage() {
   showPage(PAGE_SUBS);
 }
 
+// The arrows: the page before or after this one, in order (-1 or 1)
+void stepPage(int dir) {
+  if (!channel.loaded) return;
+  int from = (currentPage < 0 || currentPage == PAGE_LIVE) ? lastNormalPage : currentPage;
+  if (from < 0) from = PAGE_SUBS;
+  for (int i = 1; i <= PAGE_COUNT; i++) {
+    int p = ((from + dir * i) % PAGE_COUNT + PAGE_COUNT) % PAGE_COUNT;
+    if (pageAvailable(p)) {
+      showPage(p);
+      pagePicked();
+      return;
+    }
+  }
+}
+
+// You changed page yourself. With pages set to "Never", it's remembered (a few
+// seconds later, so flicking through pages doesn't keep writing to memory).
+void pagePicked() {
+  wantPage = -1;
+  if (!autoPages()) pagePickedAt = millis();
+}
+
+// False when Settings say "Each page shows for: Never" - then nothing changes
+// page by itself (no timer, no jumping to the pet, messages or new subscribers)
+bool autoPages() {
+  return cfg.pageSecs > 0;
+}
+
 // Someone is using the screen, so don't jump pages on them
 bool userBusy() {
   return keyboardOpen || infoShowing || millis() - lastInteraction < 60000;
@@ -599,6 +673,13 @@ bool pageHolds(int page) {
 }
 
 void rotatePages() {
+  if (pagePickedAt && millis() - pagePickedAt > 5000) {
+    pagePickedAt = 0;
+    if (currentPage >= 0 && currentPage != PAGE_LIVE && prefs.getUChar("homepg", 255) != currentPage) {
+      prefs.putUChar("homepg", currentPage);
+    }
+  }
+  if (!autoPages()) return;
   if (currentPage < 0 || highlighted || lampGlowing() || userBusy() || pageHolds(currentPage) || catWandering()) return;
   if (cfg.screensaverAtNight && isNightTime() && pageEnabled(PAGE_SCREENSAVER)) {
     if (currentPage != PAGE_SCREENSAVER) showPage(PAGE_SCREENSAVER);
@@ -622,6 +703,7 @@ void handleTouchAndButton() {
   static unsigned long downAt = 0;
   static unsigned long bootDownAt = 0;
   static int32_t tapX = 0, tapY = 0;
+  static int tapSide = 0;        // 7": the press started on an arrow strip
 
   static int32_t lastX = 0;
   static int moved = 0;          // how far the finger has slid while down
@@ -635,6 +717,7 @@ void handleTouchAndButton() {
     downAt = now;
     tapX = x;
     tapY = y;
+    tapSide = tft.touchSide;
     lastX = x;
     moved = 0;
     stroked = false;
@@ -643,7 +726,7 @@ void handleTouchAndButton() {
     moved += abs((int)(x - lastX));
     lastX = x;
     // Sliding across the cat strokes it
-    if (armed && moved > 30 && cfg.petType >= SP_CAT && currentPage == PAGE_PET && !keyboardOpen &&
+    if (armed && !tapSide && moved > 30 && cfg.petType >= SP_CAT && currentPage == PAGE_PET && !keyboardOpen &&
         !petFullScreen() && !petSpecialScene() &&
         y > PET_SCENE_Y && y < PET_BTN_Y && now - lastStroke > 300) {
       catStroke();
@@ -658,7 +741,7 @@ void handleTouchAndButton() {
     if (held >= 2000 && !infoShowing) showInfoScreen();
     if (held >= 8000) requestSetupMode();
   }
-  if (!down && wasDown && armed && now - downAt < 2000 && !stroked) onTap(tapX, tapY);
+  if (!down && wasDown && armed && now - downAt < 2000 && !stroked) onTap(tapX, tapY, tapSide);
   if (!down) armed = true;  // ignore a touch that was already down at start
   wasDown = down;
 
@@ -672,7 +755,8 @@ void handleTouchAndButton() {
 #endif
 }
 
-void onTap(int x, int y) {
+// side: -1 or 1 if the tap was on the left or right arrow (7" only), otherwise 0
+void onTap(int x, int y, int side) {
   if (catWandering()) endWander();  // the cat scarpers when you tap
   if (nightDimmed && millis() > wakeUntil) {
     wakeUntil = millis() + 30000;
@@ -685,7 +769,7 @@ void onTap(int x, int y) {
     return;
   }
   if (keyboardOpen) {
-    keyboardTap(x, y);
+    if (!side) keyboardTap(x, y);
     return;
   }
   if (lampGlowing()) {
@@ -693,11 +777,17 @@ void onTap(int x, int y) {
     return;
   }
   highlighted = false;
+  if (side) {
+    lastInteraction = millis();
+    stepPage(side);
+    return;
+  }
   if (currentPage >= 0 && pageTap(currentPage, x, y)) {
     lastInteraction = millis();
     return;
   }
   nextPage();
+  pagePicked();
 }
 
 // Buttons on interactive pages. Returns true if the tap was used.
@@ -726,14 +816,14 @@ void animatePage() {
   if (infoShowing || keyboardOpen) return;
   unsigned long now = millis();
   if (catWandering()) {
-    if (now - last >= 60) {
+    if (now - last >= (unsigned long)max(60, ANIM_MIN_MS)) {
       last = now;
       wanderFrame();
     }
     return;
   }
   if (lampGlowing()) {
-    if (now - last >= 40) {
+    if (now - last >= (unsigned long)max(40, ANIM_MIN_MS)) {
       last = now;
       lampGlowFrame();
     }
@@ -742,10 +832,11 @@ void animatePage() {
   if (currentPage < 0) return;
   int interval = currentPage == PAGE_SCREENSAVER ? 40
                : currentPage == PAGE_STOPWATCH   ? 100
-               : currentPage == PAGE_MOODLAMP    ? 50
+               : currentPage == PAGE_MOODLAMP    ? (BOARD_7INCH ? 160 : 50)  // repaints the whole screen
                : currentPage == PAGE_PET         ? petAnimInterval()
                : currentPage == PAGE_EIGHTBALL   ? 60
                : currentPage == PAGE_SPOTIFY     ? 1000 : 0;
+  if (interval && interval < ANIM_MIN_MS) interval = ANIM_MIN_MS;
   if (!interval || now - last < (unsigned long)interval) return;
   last = now;
   switch (currentPage) {
@@ -773,7 +864,7 @@ void everyMinute() {
 
   // The pet calls for you when it needs something
   static unsigned long lastPetCall = 0;
-  if (petNeedsYou() && pageEnabled(PAGE_PET) && currentPage != PAGE_PET && !userBusy() &&
+  if (petNeedsYou() && pageEnabled(PAGE_PET) && currentPage != PAGE_PET && !userBusy() && autoPages() &&
       (lastPetCall == 0 || millis() - lastPetCall > 5UL * 60 * 1000)) {
     lastPetCall = millis();
     showPage(PAGE_PET);
@@ -808,3 +899,142 @@ void applyBrightness() {
   shownBrightness = nightDimmed && !awake ? cfg.nightBrightness : cfg.brightness;
   tft.setBrightness(shownBrightness);
 }
+
+// ---------------------------------------------------------------- USB testing
+
+// Single-letter commands typed over USB (115200 baud), for checking the 7"
+// screen's health from a computer:
+//   s  print screen health every 2 seconds (again to stop)
+//   t  stop / restart reading the touch panel
+//   a  stop / restart flushing drawings out of the cache
+//   z  WiFi power saving off / on
+//   p  then a number: pixel clock in MHz, e.g. p12
+//   b  then a number: lines per fast buffer, e.g. b20
+//   g  then a number: show that page, e.g. g0
+//   c  next way of refilling the fast buffers: processor, DMA, half each
+//   r  then a number: percent the DMA engine copies when splitting, e.g. r60
+void usbDebug() {
+#if BOARD_7INCH && SCREEN_BOUNCE
+  static bool printing = false, autoDisplay = true, wifiSleep = true;
+  static unsigned long lastPrint = 0;
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == 's') {
+      printing = !printing;
+      lcd.screenBus().takeStats();
+      lastPrint = millis();
+      Serial.printf("stats %s (buffer lasts %u us)\n", printing ? "on" : "off", (unsigned)lcd.screenBus().bufferUs());
+    } else if (c == 't') {
+      tft.touchPaused = !tft.touchPaused;
+      Serial.printf("touch %s\n", tft.touchPaused ? "paused" : "on");
+    } else if (c == 'a') {
+      autoDisplay = !autoDisplay;
+      lcd.setAutoDisplay(autoDisplay);
+      Serial.printf("cache flush %s\n", autoDisplay ? "on" : "off");
+    } else if (c == 'z') {
+      wifiSleep = !wifiSleep;
+      WiFi.setSleep(wifiSleep);
+      Serial.printf("wifi power saving %s\n", wifiSleep ? "on" : "off");
+    } else if (c == 'c') {
+      auto& bus = lcd.screenBus();
+      bool ok = bus.setRefill((Bus_RGBBounce::Refill)((bus.refillMode() + 1) % 4));
+      Serial.printf("refill by %s%s (buffer at %p)\n", bus.refillName(), ok ? "" : " (dma not available)",
+                    (const void*)bus.lastBuffer);
+    } else if (c == 'r') {
+      int share = Serial.parseInt();
+      if (share >= 10 && share <= 90) lcd.screenBus().dmaShare = share;
+      Serial.printf("dma share %d%%\n", (int)lcd.screenBus().dmaShare);
+    } else if (c == 'g') {
+      int page = Serial.parseInt();
+      if (page >= 0 && page < PAGE_COUNT) showPage(page);
+      Serial.printf("page %d\n", currentPage);
+    } else if (c == 'b') {
+      int lines = Serial.parseInt();
+      bool ok = lcd.screenBus().setBufferLines(lines);
+      Serial.printf("buffers of %d lines %s\n", lines, ok ? "set" : "failed");
+    } else if (c == 'p') {
+      int mhz = Serial.parseInt();
+      if (mhz >= 8 && mhz <= 24) {
+        bool ok = lcd.screenBus().setPixelClock(mhz * 1000000UL);
+        Serial.printf("pixel clock %d MHz %s\n", mhz, ok ? "set" : "failed");
+      }
+    }
+  }
+  usbStatsOn = printing;
+  (void)lastPrint;
+  static TaskHandle_t statsTask = nullptr;
+  if (printing && !statsTask) {
+    // Printed from the other processor core, so it still reports if the screen's core is swamped
+    xTaskCreatePinnedToCore(usbStatsLoop, "stats", 4096, nullptr, 2, &statsTask, 0);
+  }
+#elif BOARD_7INCH
+  // The direct screen connection:
+  //   s  print screen health every 2 seconds (again to stop)
+  //   g  then a number: show that page, e.g. g16
+  //   w  then a number: flush the cache in pieces of this many KB (0 = all at once)
+  //   d  then a number: microseconds to wait between pieces
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == 's') {
+      usbStatsOn = !usbStatsOn;
+      screenWatch.take();
+      Serial.printf("stats %s\n", usbStatsOn ? "on" : "off");
+    } else if (c == 'g') {
+      int page = Serial.parseInt();
+      if (page >= 0 && page < PAGE_COUNT) showPage(page);
+      Serial.printf("page %d\n", currentPage);
+    } else if (c == 'k') {
+      if (!catWandering()) {
+        lowResCanvas = !lowResCanvas;
+        canvas.deleteSprite();
+      }
+      Serial.printf("animation canvas %s\n", lowResCanvas ? "half size in fast memory" : "full size in PSRAM");
+    } else if (c == 'w') {
+      writebackPieceKB = Serial.parseInt();
+      Serial.printf("cache flush in %u KB pieces (0 = all at once)\n", (unsigned)writebackPieceKB);
+    } else if (c == 'd') {
+      writebackGapUs = Serial.parseInt();
+      Serial.printf("%u us between pieces\n", (unsigned)writebackGapUs);
+    }
+  }
+  static TaskHandle_t statsTask = nullptr;
+  if (usbStatsOn && !statsTask) {
+    xTaskCreatePinnedToCore(usbStatsLoop, "stats", 4096, nullptr, 2, &statsTask, 0);
+  }
+#endif
+}
+
+#if BOARD_7INCH && !SCREEN_BOUNCE
+void usbStatsLoop(void*) {
+  for (;;) {
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    if (!usbStatsOn) continue;
+    auto st = screenWatch.take();
+    uint32_t calls = writebackCalls;
+    writebackCalls = 0;
+    Serial.printf("frames %u of %u | off the beat %u, worst %u us | flushes %u (%u KB pieces, %u us gaps) | "
+                  "loops %u page %d\n",
+                  (unsigned)st.frames, (unsigned)st.expected, (unsigned)st.offbeat, (unsigned)st.worstUs,
+                  (unsigned)calls, (unsigned)writebackPieceKB, (unsigned)writebackGapUs, (unsigned)loopPasses,
+                  currentPage);
+    loopPasses = 0;
+  }
+}
+#endif
+
+#if BOARD_7INCH && SCREEN_BOUNCE
+void usbStatsLoop(void*) {
+  for (;;) {
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    if (!usbStatsOn) continue;
+    auto st = lcd.screenBus().takeStats();
+    Serial.printf("%s | budget %u us | cpu %u us, dma %u us (jobs %u dropped %u refused %u) | late %u jumps %u "
+                  "worst delay %u us | frame wobble %u us | frames %u loops %u page %d\n",
+                  lcd.screenBus().refillName(), (unsigned)lcd.screenBus().bufferUs(), (unsigned)st.cpuUs,
+                  (unsigned)st.dmaUs, (unsigned)st.dmaJobs, (unsigned)st.dmaWaited, (unsigned)st.dmaStuck,
+                  (unsigned)st.late, (unsigned)st.jumps, (unsigned)st.worstUs, (unsigned)st.vsyncWobbleUs,
+                  (unsigned)st.frames, (unsigned)loopPasses, currentPage);
+    loopPasses = 0;
+  }
+}
+#endif

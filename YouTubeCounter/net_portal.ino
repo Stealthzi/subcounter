@@ -264,9 +264,16 @@ void sendSettingsPage(const String& problem) {
     }
   }
   p += "<label>Each page shows for<select name=pagesecs>";
+  p += optionTag("0", "Never change by itself", cfg.pageSecs == 0);
   const int secsOptions[] = {5, 8, 10, 15, 20, 30};
   for (int i = 0; i < 6; i++) p += optionTag(String(secsOptions[i]), String(secsOptions[i]) + " seconds", cfg.pageSecs == secsOptions[i]);
-  p += "</select><span class=hint>Tap the screen to skip to the next page</span></label>";
+  p += "</select><span class=hint>"
+#if BOARD_7INCH
+       "Use the arrows either side of the screen to change page. "
+#else
+       "Tap an empty part of the screen to go to the next page. "
+#endif
+       "With Never, the page you pick stays put, even after a restart</span></label>";
 
   // Where you are, weather and time
   p += fieldset("Your area and time");
@@ -488,7 +495,8 @@ void handleSave() {
   }
   cfg.pages = pages ? pages : (1UL << PAGE_SUBS);
   cfg.refreshSecs     = argInt("refresh", cfg.refreshSecs, 15, 3600);
-  cfg.pageSecs        = argInt("pagesecs", cfg.pageSecs, 3, 120);
+  cfg.pageSecs        = argInt("pagesecs", cfg.pageSecs, 0, 120);
+  if (cfg.pageSecs > 0 && cfg.pageSecs < 3) cfg.pageSecs = 3;
   cfg.brightness      = argInt("bright", cfg.brightness, 10, 255);
   cfg.nightMode       = server.hasArg("night");
   cfg.nightFrom       = argInt("nfrom", cfg.nightFrom, 0, 23);

@@ -347,16 +347,20 @@ void petOnMessage(const String& kind, const String& from, const String& text) {
     savePet();
   }
   petSay(visitorPet + " brought " + (gift.length() ? gift : String("a present")) + "!", 15000);
-  if (pageEnabled(PAGE_PET) && !userBusy() && !lampGlowing()) showPage(PAGE_PET);
+  if (pageEnabled(PAGE_PET) && !userBusy() && !lampGlowing() && autoPages()) showPage(PAGE_PET);
 }
 
 // ---------------------------------------------------------------- drawing
 
+// The canvas animations draw on. On the 7" it can be drawn at half size in
+// fast memory and doubled up on screen (see GfxSprite::createLowRes).
 bool ensureCanvas(int w, int h) {
-  if (canvas.width() == w && canvas.height() == h) return true;
+  if (canvas.width() == w && canvas.height() == h && canvas.lowRes() == lowResCanvas) return true;
   canvas.deleteSprite();
   canvas.setColorDepth(8);
-  return canvas.createSprite(w, h) != nullptr;
+  bool ok = (lowResCanvas ? canvas.createLowRes(w, h) : canvas.createSprite(w, h)) != nullptr;
+  if (lowResCanvas && !canvas.lowRes()) lowResCanvas = false;  // no room in fast memory
+  return ok;
 }
 
 void drawHeart(int x, int y, bool full) {

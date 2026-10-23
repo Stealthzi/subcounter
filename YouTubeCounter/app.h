@@ -8,7 +8,7 @@
 
 // ======================= FIRMWARE =======================
 
-#define FIRMWARE_VERSION "2.2.0"
+#define FIRMWARE_VERSION "2.2.1"
 
 // GitHub repository that holds the update files, as "github-name/repo-name".
 // While it says "your-github-name", remote updates are switched off.
@@ -82,7 +82,18 @@ const uint16_t C_PURPLE = RGB565(155, 92, 255);
 #if BOARD_7INCH
 
 #include <lgfx/v1/platforms/esp32s3/Panel_RGB.hpp>
+
+// 0: LovyanGFX's own RGB bus, the picture streamed straight from PSRAM (steady
+//    on still pages; busy animations can make lines slip for a frame).
+// 1: the experimental buffered bus in screen_rgb.h (not right yet: the picture
+//    can roll up and down).
+#define SCREEN_BOUNCE 0
+#if SCREEN_BOUNCE
+#include "screen_rgb.h"
+#else
 #include <lgfx/v1/platforms/esp32s3/Bus_RGB.hpp>
+#include "screen_watch.h"
+#endif
 
 // Elecrow CrowPanel Advance 7" (DIS02170A: ESP32-S3-N16R8, 800 x 480 IPS, GT911 touch).
 //
@@ -122,7 +133,11 @@ struct Light_AdvanceHelper : public lgfx::ILight {
 };
 
 class CrowPanelAdvance7 : public lgfx::LGFX_Device {
+#if SCREEN_BOUNCE
+  Bus_RGBBounce       _bus;
+#else
   lgfx::Bus_RGB       _bus;
+#endif
   lgfx::Panel_RGB     _panel;
   Light_AdvanceHelper _light;
   lgfx::Touch_GT911   _touch;
@@ -160,22 +175,29 @@ public:
     _panel.config_detail(detail);
 
     auto bus = _bus.config();
-    bus.panel = &_panel;
     // Blue, green, red - Elecrow's 16-bit wiring
-    bus.pin_d0 = GPIO_NUM_21;  bus.pin_d1 = GPIO_NUM_47;  bus.pin_d2 = GPIO_NUM_48;
-    bus.pin_d3 = GPIO_NUM_45;  bus.pin_d4 = GPIO_NUM_38;
-    bus.pin_d5 = GPIO_NUM_9;   bus.pin_d6 = GPIO_NUM_10;  bus.pin_d7 = GPIO_NUM_11;
-    bus.pin_d8 = GPIO_NUM_12;  bus.pin_d9 = GPIO_NUM_13;  bus.pin_d10 = GPIO_NUM_14;
-    bus.pin_d11 = GPIO_NUM_7;  bus.pin_d12 = GPIO_NUM_17; bus.pin_d13 = GPIO_NUM_18;
-    bus.pin_d14 = GPIO_NUM_3;  bus.pin_d15 = GPIO_NUM_46;
+    const int8_t data[16] = {21, 47, 48, 45, 38, 9, 10, 11, 12, 13, 14, 7, 17, 18, 3, 46};
+    memcpy(bus.pin_data, data, sizeof(data));
     bus.pin_henable = GPIO_NUM_42;
     bus.pin_vsync = GPIO_NUM_41;
     bus.pin_hsync = GPIO_NUM_40;
     bus.pin_pclk = GPIO_NUM_39;
+    bus.hsync_front_porch = 8; bus.hsync_pulse_width = 4; bus.hsync_back_porch = 8;
+    bus.vsync_front_porch = 8; bus.vsync_pulse_width = 4; bus.vsync_back_porch = 8;
+#if SCREEN_BOUNCE
+    bus.width = 800;
+    bus.height = 480;
+    // The picture memory (PSRAM) can only just keep up with this screen, so the
+    // pixel clock is set a bit lower (about 29 frames a second) to leave room
+    bus.freq_write = boardRev >= 13 ? 12000000 : 21000000;
+    bus.bounce_lines = 20;
+#else
+    bus.panel = &_panel;
     bus.freq_write = boardRev >= 13 ? 16000000 : 21000000;
-    bus.hsync_polarity = 0; bus.hsync_front_porch = 8; bus.hsync_pulse_width = 4; bus.hsync_back_porch = 8;
-    bus.vsync_polarity = 0; bus.vsync_front_porch = 8; bus.vsync_pulse_width = 4; bus.vsync_back_porch = 8;
+    bus.hsync_polarity = 0;
+    bus.vsync_polarity = 0;
     bus.pclk_idle_high = 1;
+#endif
     _bus.config(bus);
     _panel.setBus(&_bus);
     _panel.setLight(&_light);
@@ -197,12 +219,21 @@ public:
 
     setPanel(&_panel);
   }
+
+  uint32_t pixelClock() { return _bus.config().freq_write; }
+#if SCREEN_BOUNCE
+  // True if the screen is fed through the fast bounce buffers (see screen_rgb.h)
+  bool screenBuffered() const { return _bus.bouncing(); }
+  Bus_RGBBounce& screenBus() { return _bus; }
+#endif
 };
 typedef CrowPanelAdvance7 BoardDisplay;
 // Grid point size and where the 640 x 480 page area sits on the 800 x 480 screen
 const int SCREEN_SCALE = 2, SCREEN_OFFSET_X = 80;
 // Reading touch too often upsets the screen on this board, so it's checked every 20 ms
 const unsigned long TOUCH_POLL_MS = 20;
+// Every frame on the big screen moves four times the pixels, so animations run a bit slower
+const int ANIM_MIN_MS = 80;
 #define BOARD_NAME "CrowPanel Advance 7-inch"
 
 #else
@@ -274,6 +305,7 @@ public:
 };
 typedef CheapYellowDisplay BoardDisplay;
 const int SCREEN_SCALE = 1, SCREEN_OFFSET_X = 0;
+const int ANIM_MIN_MS = 0;
 #define BOARD_NAME "Cheap Yellow Display 2.8-inch"
 
 // The RGB LED on the back of the board (LOW = on)

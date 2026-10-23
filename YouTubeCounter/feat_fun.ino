@@ -475,17 +475,20 @@ void moodLampFrame() {
     default: c = cfg.lampColour; break;
   }
   tft.fillScreen(to565(c));
+  drawNavArrowsIn(mix(c, 0x000000, 0.55f), mix(c, 0xFFFFFF, 0.25f));
   setLed((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF);
   if (millis() < moodLabelUntil) {
     tft.setFont(F_BOLD);
     tft.setTextSize(1);
     tft.setTextDatum(D_MC);
     tft.setTextColor(mix(c, 0x000000, 0.6f));
-    tft.drawString((String(MOOD_NAMES[moodMode]) + " - tap to change").c_str(), W / 2, H - 20);
+    tft.drawString((String(MOOD_NAMES[moodMode]) + " - tap the middle to change").c_str(), W / 2, H - 20);
   }
 }
 
+// Tapping the middle changes the colour; the edges move on to the next page
 bool moodLampTap(int x, int y) {
+  if (x < W / 4 || x >= W * 3 / 4) return false;
   moodMode = (moodMode + 1) % 5;
   moodLabelUntil = millis() + 2500;
   return true;

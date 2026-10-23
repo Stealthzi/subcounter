@@ -13,6 +13,7 @@ void drawCurrentPage() {
   // These two fill the whole screen
   if (currentPage == PAGE_SCREENSAVER) {
     tft.fillSides(RGB565(0, 0, 0));
+    drawNavArrowsIn(RGB565(70, 70, 80), RGB565(18, 18, 24));
     startScreensaver();
     return;
   }
