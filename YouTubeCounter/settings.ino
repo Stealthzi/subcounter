@@ -17,7 +17,7 @@ void loadSettings() {
   cfg.clock24         = prefs.getBool("clock24", true);
   cfg.pages           = prefs.getULong("pages", DEFAULT_PAGES);
   cfg.refreshSecs     = prefs.getUShort("refresh", 60);
-  cfg.pageSecs        = prefs.getUChar("pagesecs", 10);
+  cfg.pageSecs        = prefs.getUChar("pagesecs", 0);
   cfg.brightness      = prefs.getUChar("bright", 200);
   cfg.nightMode       = prefs.getBool("night", false);
   cfg.nightFrom       = prefs.getUChar("nfrom", 23);
@@ -64,6 +64,17 @@ void loadSettings() {
   if (cfg.pageSecs > 0 && cfg.pageSecs < 3) cfg.pageSecs = 3;  // 0 = never change page by itself
   if (cfg.brightness < 10) cfg.brightness = 10;
   if (cfg.pages == 0) cfg.pages = 1UL << PAGE_SUBS;
+
+  // Version 2.3 stays on the page you pick, and starts on the new channel
+  // overview. Done once, so a different choice made after that is kept.
+  if (!prefs.getBool("v23", false)) {
+    cfg.pageSecs = 0;
+    cfg.pages |= 1UL << PAGE_OVERVIEW;
+    prefs.putUChar("pagesecs", cfg.pageSecs);
+    prefs.putULong("pages", cfg.pages);
+    prefs.putUChar("homepg", PAGE_OVERVIEW);
+    prefs.putBool("v23", true);
+  }
 }
 
 void saveSettings() {

@@ -1,4 +1,4 @@
-// The pages the counter cycles through
+// The pages you move between
 
 void drawCurrentPage() {
   if (currentPage < 0) return;
@@ -8,6 +8,10 @@ void drawCurrentPage() {
   }
   if (lampGlowing()) {
     drawLampGlow();
+    return;
+  }
+  if (overlayOpen()) {  // Home or Settings is on top
+    drawOverlay();
     return;
   }
   // These two fill the whole screen
@@ -53,6 +57,7 @@ void drawCurrentPage() {
     case PAGE_SPOTIFY:   drawSpotifyPage(); break;
     case PAGE_ANALYTICS: drawAnalyticsPage(); break;
     case PAGE_REPORT:    drawReportPage(); break;
+    case PAGE_OVERVIEW:  drawOverviewPage(); break;
   }
   drawPageDots();
 }
@@ -118,8 +123,8 @@ void drawChannelPage() {
   int64_t sWeek = subsThisWeek();
 
   drawCard(8, 60, 148, 78, "TOTAL VIEWS", compact(channel.views), C_WHITE);
-  drawCard(164, 60, 148, 78, "VIEWS TODAY",
-           vToday >= 0 ? signedCompact(vToday) : String("-"), vToday > 0 ? C_GREEN : C_DIM);
+  drawCard(164, 60, 148, 78, viewsTodayLabel(false),
+           vToday >= 0 ? signedCompact(vToday) : String("-"), vToday > 0 ? C_GREEN : C_WHITE);
   drawCard(8, 146, 148, 78, "VIDEOS", withCommas(channel.videos), C_WHITE);
   if (sWeek >= 0 && sWeek != 0) {
     drawCard(164, 146, 148, 78, "SUBS THIS WEEK", signedCompact(sWeek), sWeek > 0 ? C_GREEN : C_AMBER);
@@ -528,4 +533,138 @@ void showInfoScreen() {
   }
   tft.setTextColor(C_DIM);
   tft.drawString("Tap to go back", 12, 214);
+}
+
+// ---------------------------------------------------------------- channel overview
+
+// "VIEWS TODAY", or "VIEWS SINCE START" when counting began part way through
+// today (it counts from its first look of the day). YouTube only updates a
+// channel's total views every few hours, so this can sit at 0 for a while.
+// `brief` gives the short form for the overview's narrow rows.
+String viewsTodayLabel(bool brief) {
+  const DaySnap* s = snapFor(localDay());
+  if (s) {
+    time_t taken = s->taken;
+    struct tm t;
+    localtime_r(&taken, &t);
+    if (t.tm_hour > 0 || t.tm_min > 30) return brief ? "SINCE START" : "VIEWS SINCE START";
+  }
+  return "VIEWS TODAY";
+}
+
+// One line in the overview's right-hand column: label on the left, number on the right
+void drawStatRow(int x, int y, int w, const String& label, const String& value, uint16_t colour) {
+  drawCardBox(x, y, w, 21);
+  tft.setTextSize(1);
+  tft.setFont(F_BOLD);
+  String shown = fitText(value, w / 2);
+  int valueW = tft.textWidth(shown.c_str());
+  tft.setTextDatum(D_MR);
+  tft.setTextColor(colour);
+  tft.drawString(shown.c_str(), x + w - 7, y + 11);
+  tft.setFont(F_SMALL);
+  tft.setTextDatum(D_ML);
+  tft.setTextColor(C_GREY);
+  tft.drawString(fitText(label, w - 20 - valueW).c_str(), x + 7, y + 11);
+}
+
+// Every main number on one page: subscribers and the next milestone, views,
+// videos and this week, and how the latest upload is doing
+void drawOverviewPage() {
+  // Subscribers, gained today, and the next milestone
+  drawCardBox(8, 38, 142, 90);
+  String number = channel.hidden ? String("Hidden") : withCommas(channel.subs);
+  drawBigNumber(number, 79, 58, 128, 1.0f, highlighted ? C_GREEN : C_WHITE);
+  String label = "SUBSCRIBERS";
+  String gain;
+  int64_t today = subsToday();
+  if (!channel.hidden && today > 0) gain = "  " + signedCompact(today) + " today";
+  tft.setFont(F_SMALL);
+  tft.setTextSize(1);
+  tft.setTextDatum(D_TL);
+  int lx = 79 - (tft.textWidth(label.c_str()) + tft.textWidth(gain.c_str())) / 2;
+  tft.setTextColor(C_GREY);
+  lx += tft.drawString(label.c_str(), lx, 82);
+  tft.setTextColor(C_GREEN);
+  tft.drawString(gain.c_str(), lx, 82);
+  uint64_t target = channel.hidden ? 0 : nextMilestone(channel.subs);
+  if (target) {
+    uint64_t from = previousMilestone(channel.subs);
+    drawProgressBar(16, 101, 126, 7, (float)(channel.subs - from) / (float)(target - from), C_ACCENT);
+    tft.setFont(F_SMALL);
+    tft.setTextDatum(D_TC);
+    tft.setTextColor(C_GREY);
+    tft.drawString(fitText(compact(target - channel.subs) + " to " + compact(target), 130).c_str(), 79, 111);
+  }
+
+  // Views, this week and videos
+  int64_t vToday = viewsToday();
+  int64_t sWeek = subsThisWeek(), vWeek = viewsThisWeek();
+  drawStatRow(156, 38, 156, "TOTAL VIEWS", compact(channel.views), C_WHITE);
+  drawStatRow(156, 61, 156, viewsTodayLabel(true), vToday >= 0 ? signedCompact(vToday) : String("-"),
+              vToday > 0 ? C_GREEN : C_WHITE);
+  if (sWeek > 0 || sWeek < 0) {
+    drawStatRow(156, 84, 156, "SUBS THIS WEEK", signedCompact(sWeek), sWeek > 0 ? C_GREEN : C_AMBER);
+  } else {
+    drawStatRow(156, 84, 156, "VIEWS THIS WEEK", vWeek >= 0 ? signedCompact(vWeek) : String("-"),
+                vWeek > 0 ? C_GREEN : C_WHITE);
+  }
+  drawStatRow(156, 107, 156, "VIDEOS", withCommas(channel.videos), C_WHITE);
+
+  // The latest upload
+  drawCardBox(8, 134, 304, 88);
+  int li = latestIndex();
+  if (li < 0) {
+    drawLabel(16, 142, "LATEST UPLOAD", C_ACCENT, "");
+    tft.setFont(F_BOLD);
+    tft.setTextColor(C_GREY);
+    tft.setTextDatum(D_TL);
+    tft.drawString("No uploads yet", 16, 164);
+    return;
+  }
+  const VideoInfo& v = uploads.v[li];
+  drawLabel(16, 142, "LATEST UPLOAD", C_ACCENT, v.live == LIVE_NOW ? String("LIVE NOW") : timeAgo(v.published));
+  tft.setFont(F_BOLD);
+  tft.setTextSize(1);
+  tft.setTextColor(C_WHITE);
+  tft.setTextDatum(D_TL);
+  tft.drawString(fitText(v.title, 288).c_str(), 16, 160);
+
+  // Views, likes and comments as three small numbers
+  const int colW = 96;
+  String values[3] = {compact(v.views), v.hasLikes ? compact(v.likes) : String("-"),
+                      v.hasComments ? compact(v.comments) : String("-")};
+  const char* names[3] = {"views", "likes", "comments"};
+  for (int i = 0; i < 3; i++) {
+    int x = 16 + i * colW;
+    tft.setFont(F_BOLD);
+    tft.setTextColor(C_WHITE);
+    int w = tft.drawString(values[i].c_str(), x, 181);
+    tft.setFont(F_SMALL);
+    tft.setTextColor(C_GREY);
+    tft.drawString((" " + String(names[i])).c_str(), x + w, 183);
+  }
+
+  // How fast it's going, and against your usual
+  String line;
+  if (v.live == LIVE_NOW) {
+    line = compact(v.liveViewers) + " watching now";
+  } else {
+    long perHour = viewsPerHour();
+    if (perHour > 0) line = "+" + compact(perHour) + " views an hour";
+    bool real;
+    float vs = vsUsual(real);
+    if (vs > 0) {
+      char buf[12];
+      snprintf(buf, sizeof(buf), vs >= 10 ? "%.0fx" : "%.1fx", vs);
+      if (line.length()) line += "   ";
+      line += String(real ? "" : "about ") + buf + " your usual";
+    }
+  }
+  if (line.length()) {
+    tft.setFont(F_SMALL);
+    tft.setTextColor(C_GREY);
+    tft.setTextDatum(D_TL);
+    tft.drawString(fitText(line, 288).c_str(), 16, 202);
+  }
 }

@@ -8,7 +8,7 @@
 
 // ======================= FIRMWARE =======================
 
-#define FIRMWARE_VERSION "2.2.1"
+#define FIRMWARE_VERSION "2.3.0"
 
 // GitHub repository that holds the update files, as "github-name/repo-name".
 // While it says "your-github-name", remote updates are switched off.
@@ -331,11 +331,30 @@ enum PageId : uint8_t {
   PAGE_ENERGY, PAGE_FUEL, PAGE_CALENDAR, PAGE_MESSAGES, PAGE_PET, PAGE_ALERTS,
   PAGE_GAMES, PAGE_SCREENSAVER, PAGE_EIGHTBALL, PAGE_STOPWATCH, PAGE_AIR,
   PAGE_COUNTDOWN, PAGE_MOODLAMP, PAGE_JOKE, PAGE_SPOTIFY, PAGE_ANALYTICS, PAGE_REPORT,
+  PAGE_OVERVIEW,
   PAGE_COUNT
 };
 
 // Pages that only appear once they're set up (energy, fuel...) are on by default
 const uint32_t DEFAULT_PAGES = ((1UL << PAGE_COUNT) - 1) & ~(1UL << PAGE_CRYPTO);
+static_assert(PAGE_COUNT <= 32, "page on/off choices are kept in 32 bits");
+
+// The order the arrows, Home and the settings list go through: the channel
+// overview first, then YouTube, home, messages and pet, then the fun ones
+const uint8_t PAGE_ORDER[PAGE_COUNT] = {
+  PAGE_OVERVIEW, PAGE_SUBS, PAGE_CHANNEL, PAGE_LATEST, PAGE_RECENT, PAGE_TOP, PAGE_COMMENT,
+  PAGE_GROWTH, PAGE_REPORT, PAGE_COMPARE, PAGE_LIVE, PAGE_ANALYTICS,
+  PAGE_CLOCK, PAGE_WEATHER, PAGE_ALERTS, PAGE_AIR, PAGE_ENERGY, PAGE_FUEL, PAGE_CALENDAR, PAGE_COUNTDOWN,
+  PAGE_MESSAGES, PAGE_PET,
+  PAGE_SPOTIFY, PAGE_GAMES, PAGE_JOKE, PAGE_EIGHTBALL, PAGE_STOPWATCH, PAGE_SCREENSAVER, PAGE_MOODLAMP, PAGE_CRYPTO
+};
+
+// Screens drawn on top of the pages (see ui_home.ino)
+enum Overlay : uint8_t { OVERLAY_NONE, OVERLAY_HOME, OVERLAY_SETTINGS, OVERLAY_PAGES, OVERLAY_PHONE };
+
+// 7": the Home and Settings buttons at the bottom of the side strips. Taps
+// below SIDE_BUTTON_Y (page units) press them; above it are the arrows.
+const int SIDE_BUTTON_Y = 168, SIDE_BUTTON_CY = 200;
 
 // What may go to ChatGPT with a question (one bit each). The calendar is off
 // unless you tick it, as event names can be personal.
@@ -357,7 +376,7 @@ struct Settings {
   bool     clock24 = true;
   uint32_t pages = DEFAULT_PAGES;
   uint16_t refreshSecs = 60;
-  uint8_t  pageSecs = 10;
+  uint8_t  pageSecs = 0;           // seconds per page; 0 = only change when you tap
   uint8_t  brightness = 200;
   bool     nightMode = false;
   uint8_t  nightFrom = 23, nightTo = 7, nightBrightness = 15;

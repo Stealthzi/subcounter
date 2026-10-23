@@ -223,7 +223,8 @@ void drawSides() {
   drawNavArrows();
 }
 
-// 7" only: a back arrow and a forward arrow in the strips either side of the page
+// 7" only: in the strips either side of the page, a back and a forward arrow,
+// with Home (left) and Settings (right) buttons below them
 void drawNavArrows() {
   drawNavArrowsIn(C_GREY, C_CARD);
 }
@@ -233,11 +234,42 @@ void drawNavArrowsIn(uint16_t arrow, uint16_t button) {
   int cy = lcd.height() / 2;
   for (int side = -1; side <= 1; side += 2) {
     int cx = side < 0 ? tft.ox / 2 : lcd.width() - tft.ox / 2;
-    lcd.fillSmoothCircle(cx, cy, 28, button);
-    int tip = cx + side * 7, back = cx - side * 7;
-    lcd.drawWideLine(back, cy - 13, tip, cy, 3, arrow);
-    lcd.drawWideLine(tip, cy, back, cy + 13, 3, arrow);
+    if (!overlayOpen()) {  // Home and Settings have their own buttons for moving about
+      lcd.fillSmoothCircle(cx, cy, 28, button);
+      int tip = cx + side * 7, back = cx - side * 7;
+      lcd.drawWideLine(back, cy - 13, tip, cy, 3, arrow);
+      lcd.drawWideLine(tip, cy, back, cy + 13, 3, arrow);
+    }
+    // Home and Settings, lit up while open
+    bool lit = side < 0 ? overlay == OVERLAY_HOME : (overlayOpen() && overlay != OVERLAY_HOME);
+    uint16_t bg = lit ? C_ACCENT : button, fg = lit ? RGB565(8, 12, 30) : arrow;
+    int by = tft.Y(SIDE_BUTTON_CY);
+    lcd.fillSmoothCircle(cx, by, 26, bg);
+    if (side < 0) drawHomeIcon(cx, by, fg, bg);
+    else drawGearIcon(cx, by, fg, bg);
+    lcd.setFont(F_BOLD);
+    lcd.setTextSize(1);
+    lcd.setTextDatum(D_TC);
+    lcd.setTextColor(arrow);
+    lcd.drawString(side < 0 ? "Home" : "Settings", cx, by + 33);
   }
+}
+
+// A little house, drawn straight onto the 7" screen around (cx, cy)
+void drawHomeIcon(int cx, int cy, uint16_t fg, uint16_t bg) {
+  lcd.fillTriangle(cx - 14, cy - 1, cx, cy - 14, cx + 14, cy - 1, fg);
+  lcd.fillRect(cx - 9, cy - 2, 19, 13, fg);
+  lcd.fillRect(cx - 3, cy + 3, 7, 8, bg);  // the door
+}
+
+// A cog
+void drawGearIcon(int cx, int cy, uint16_t fg, uint16_t bg) {
+  for (int i = 0; i < 8; i++) {
+    float a = i * PI / 4;
+    lcd.drawWideLine(cx + cosf(a) * 8, cy + sinf(a) * 8, cx + cosf(a) * 14, cy + sinf(a) * 14, 3.2f, fg);
+  }
+  lcd.fillSmoothCircle(cx, cy, 10, fg);
+  lcd.fillSmoothCircle(cx, cy, 4, bg);
 }
 
 // Draws text with a left-to-right colour gradient, like a styled display name.
@@ -284,7 +316,7 @@ uint16_t statusColour() {
 
 // Each section of pages has its own colour and title
 bool isYouTubePage(int page) {
-  return page <= PAGE_LIVE || page == PAGE_ANALYTICS || page == PAGE_REPORT;
+  return page <= PAGE_LIVE || page == PAGE_ANALYTICS || page == PAGE_REPORT || page == PAGE_OVERVIEW;
 }
 
 uint16_t pageColour(int page) {
@@ -342,6 +374,11 @@ void drawHeader() {
     tft.drawString(String(unreadCount).c_str(), rightEdge - 12, 18);
     rightEdge -= 28;
   }
+#if !BOARD_7INCH
+  // A small grid: tap the title bar for Home (the 7" has a Home button instead)
+  for (int i = 0; i < 4; i++) tft.fillRoundRect(rightEdge - 14 + (i % 2) * 7, 11 + (i / 2) * 7, 5, 5, 1, C_GREY);
+  rightEdge -= 20;
+#endif
 
   // Left side: YouTube logo and channel name, or the page's colour and title
   tft.setFont(F_BOLD);
@@ -361,7 +398,8 @@ void drawHeader() {
 // Small dots at the bottom showing which page you're on
 void drawPageDots() {
   int n = 0, current = -1;
-  for (int p = 0; p < PAGE_COUNT; p++) {
+  for (int i = 0; i < PAGE_COUNT; i++) {
+    int p = PAGE_ORDER[i];
     if (!pageAvailable(p)) continue;
     if (p == currentPage) current = n;
     n++;

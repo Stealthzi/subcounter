@@ -1,4 +1,4 @@
-# YouTube Counter, version 2.2
+# YouTube Counter, version 2.3
 
 A desk screen for your YouTube stats and much more. It runs on two boards, and the program works out which one it's on by itself:
 
@@ -9,11 +9,17 @@ You set it up from your phone, so there's no code to edit. It updates itself ove
 
 ## What it shows
 
-The pages change every 10 seconds, or never if you'd rather it stayed on one page (Settings > "Each page shows for" > "Never change by itself"; it then remembers the page you picked, even after a restart). On the 7" screen, use the **arrows** either side to go back and forward. On the 2.8" screen, **tap** an empty part of the page to go to the next one. You can switch every page on or off in Settings, and pages that need setting up only appear once they're set up.
+It starts on the **Overview**, with all the main YouTube numbers on one page, and stays on whatever page you pick (even after a restart). Only you change the page:
+
+- **Arrows** either side (7"), or **swipe** left or right.
+- **Home** (the button at the bottom left on the 7", or tap the title bar on either screen) shows every page as a tile. Tap one to go straight there.
+- On the 2.8" screen, a **tap** on an empty part of the page also moves to the next one.
+
+If you'd like the pages to change by themselves, pick **Every 10 s** or **Every 30 s** in Settings. Pages that need setting up only appear once they're set up.
 
 | Section | Pages |
 |---|---|
-| **YouTube** | Subscribers with a milestone bar · Channel stats · Latest upload, with views per hour and **how it's doing against your usual** · Recent uploads · Most viewed video · Newest comment · 7-day chart · **Weekly report card** · Head to head · Live and premieres · **Exact stats** (gained and lost subscribers, watch time, revenue) |
+| **YouTube** | **Overview** (subscribers, gained today, next milestone, total views, views today, this week, videos, and your latest upload's views, likes, comments, views per hour and vs your usual) · Subscribers with a milestone bar · Channel stats · Latest upload, with views per hour and **how it's doing against your usual** · Recent uploads · Most viewed video · Newest comment · 7-day chart · **Weekly report card** · Head to head · Live and premieres · **Exact stats** (gained and lost subscribers, watch time, revenue) |
 | **Home** | Clock · Weather · **Alerts** (frost, Met Office warnings, MOT/tax due) · **Air quality and pollen** · **Energy** (Octopus usage and cost) · **Cheapest petrol** with a price trend · **Google Calendar** · **Countdowns** |
 | **You and your brother** | **Messages** (quick replies, typing with the stylus, or sending from your phone) · **Friendship lamp** · **Desk pet**, which visits his pet |
 | **Pet adventures** | Levels 1-50 · Quests and daily streaks · Mystery boxes and 91 items to collect · Missions and battles · Dog, hamster and dragon to unlock · Tricks · Mini-games · Badges · A room to decorate |
@@ -22,9 +28,17 @@ The pages change every 10 seconds, or never if you'd rather it stayed on one pag
 
 **Seasonal decorations** appear at Christmas, Halloween, New Year, Valentine's and Easter, and the pet dresses up for them too.
 
-**Buttons:**
-- **Arrows (7"):** the page before or after. **Tap (2.8"):** the next page. Either way, buttons on a page work as normal, and at night a tap lights the screen up for 30 seconds.
-- **Mood lamp:** tap the middle to change the colour.
+**On the screen:**
+- **Arrows (7") or swipe:** the page before or after. **Tap (2.8"):** the next page. Buttons on a page work as normal.
+- **Home:** every page as a tile, plus **Sleep**.
+- **Settings** (the button at the bottom right on the 7", or the tile on Home):
+  - change pages by themselves (**Never**, every 10 or 30 seconds)
+  - **brightness**
+  - **at night**: stay on, dim, or screen off (night hours are set on your phone)
+  - **choose screens**: tick the pages you want
+  - a **QR code** for the phone settings page
+- **Sleep** (on Home or Settings): the screen goes off until you touch it. The touch that wakes it doesn't press anything. At night with "Dim" or "Screen off", a tap lights it up for 30 seconds.
+- **Mood lamp:** tap to change the colour (on the 2.8", tap the middle).
 - **Hold for 2 seconds:** info screen, showing the version, WiFi signal, any problems and the **settings page address**.
 - **Hold for 8 seconds:** setup mode. On the 2.8" board, holding the **BOOT** button on the back for 3 seconds does the same.
 - **Hold a finger on the screen while plugging it in:** setup mode.
@@ -68,7 +82,7 @@ Install the libraries **LovyanGFX** and **ArduinoJson**. Then pick the board set
 4. Fill in your WiFi, your channel's @handle and the API key, then press **Save and restart**.
 5. The first time it starts, it checks the touch screen. On the 7" board you **tap one dot** in the top corner. On the 2.8" board you **tap four arrows**, ideally with the stylus from the box. If you don't tap anything, it skips this after 30 seconds.
 
-**To change settings later:** hold a finger on the screen for 2 seconds. The info screen shows the counter's address (something like `http://192.168.1.50`). Open that on any phone or PC on the same WiFi.
+**To change settings later:** open **Settings > Phone settings** on the counter and scan the QR code. Or hold a finger on the screen for 2 seconds: the info screen shows the counter's address (something like `http://192.168.1.50`). Open that on any phone or PC on the same WiFi.
 
 ---
 
@@ -265,6 +279,7 @@ Your WiFi password, API keys, sign-in passes and pairing code are only stored on
 
 ## Good to know
 
+- **Views today** counts from the counter's first look of the day. If it wasn't on just after midnight, it says **SINCE START** instead. YouTube only updates a channel's total views every few hours, so it can sit at 0 for a while.
 - **YouTube rounds public subscriber counts.** Above 1,000 you get the first 3 digits, so at 800,000 it moves in steps of 1,000. The **Exact stats** page uses your own YouTube Analytics data, which is exact but a day or two behind.
 - **Today, this week, the chart and the petrol trend fill in over time.** The counter keeps a snapshot each day and remembers it through restarts and updates.
 - **Prices:** petrol prices come from checkfuelprices.co.uk, weather and air quality from Open-Meteo, and crypto from CoinGecko. All are free, with no account needed.

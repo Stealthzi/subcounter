@@ -482,13 +482,15 @@ void moodLampFrame() {
     tft.setTextSize(1);
     tft.setTextDatum(D_MC);
     tft.setTextColor(mix(c, 0x000000, 0.6f));
-    tft.drawString((String(MOOD_NAMES[moodMode]) + " - tap the middle to change").c_str(), W / 2, H - 20);
+    tft.drawString((String(MOOD_NAMES[moodMode]) + (BOARD_7INCH ? " - tap to change" : " - tap the middle to change")).c_str(), W / 2, H - 20);
   }
 }
 
 // Tapping the middle changes the colour; the edges move on to the next page
 bool moodLampTap(int x, int y) {
-  if (x < W / 4 || x >= W * 3 / 4) return false;
+#if !BOARD_7INCH
+  if (x < W / 4 || x >= W * 3 / 4) return false;  // the edges move on a page (no arrows on this screen)
+#endif
   moodMode = (moodMode + 1) % 5;
   moodLabelUntil = millis() + 2500;
   return true;

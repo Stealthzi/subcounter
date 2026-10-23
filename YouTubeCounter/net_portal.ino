@@ -132,7 +132,8 @@ const char* PAGE_NAMES[PAGE_COUNT] = {
   "Newest comment", "7-day chart", "Head to head", "Live and premieres", "Clock", "Weather", "Crypto prices",
   "Energy (Octopus)", "Cheapest petrol", "Google Calendar", "Messages and lamp", "Desk pet", "Alerts",
   "Free Epic games", "Screensaver", "Magic 8-ball", "Stopwatch", "Air quality and pollen", "Countdowns",
-  "Mood lamp", "Joke or fact of the day", "Spotify now playing", "Exact YouTube stats", "Weekly report card"
+  "Mood lamp", "Joke or fact of the day", "Spotify now playing", "Exact YouTube stats", "Weekly report card",
+  "Channel overview"
 };
 const char* PAGE_HINTS[PAGE_COUNT] = {
   "Big count, gained today and your next milestone",
@@ -163,11 +164,13 @@ const char* PAGE_HINTS[PAGE_COUNT] = {
   "A new one every day",
   "Shows when music is playing - needs the Spotify sign-in",
   "Exact gains, losses, watch time, revenue - needs the YouTube sign-in",
-  "Last week's views and subs with a grade - fills in after a week"
+  "Last week's views and subs with a grade - fills in after a week",
+  "All the main numbers on one page: subscribers, views, this week and your latest upload"
 };
+static_assert(sizeof(PAGE_HINTS) / sizeof(PAGE_HINTS[0]) == PAGE_COUNT, "a page is missing a description");
 static_assert(sizeof(PAGE_NAMES) / sizeof(PAGE_NAMES[0]) == PAGE_COUNT, "a page is missing a name");
-const int PAGE_GROUPS[][12] = {
-  {PAGE_SUBS, PAGE_CHANNEL, PAGE_LATEST, PAGE_RECENT, PAGE_TOP, PAGE_COMMENT, PAGE_GROWTH, PAGE_REPORT, PAGE_COMPARE, PAGE_LIVE, PAGE_ANALYTICS, -1},
+const int PAGE_GROUPS[][14] = {
+  {PAGE_OVERVIEW, PAGE_SUBS, PAGE_CHANNEL, PAGE_LATEST, PAGE_RECENT, PAGE_TOP, PAGE_COMMENT, PAGE_GROWTH, PAGE_REPORT, PAGE_COMPARE, PAGE_LIVE, PAGE_ANALYTICS, -1},
   {PAGE_CLOCK, PAGE_WEATHER, PAGE_ALERTS, PAGE_AIR, PAGE_ENERGY, PAGE_FUEL, PAGE_CALENDAR, PAGE_COUNTDOWN, -1},
   {PAGE_MESSAGES, PAGE_PET, -1},
   {PAGE_SPOTIFY, PAGE_GAMES, PAGE_JOKE, PAGE_EIGHTBALL, PAGE_STOPWATCH, PAGE_SCREENSAVER, PAGE_MOODLAMP, PAGE_CRYPTO, -1},
@@ -269,11 +272,12 @@ void sendSettingsPage(const String& problem) {
   for (int i = 0; i < 6; i++) p += optionTag(String(secsOptions[i]), String(secsOptions[i]) + " seconds", cfg.pageSecs == secsOptions[i]);
   p += "</select><span class=hint>"
 #if BOARD_7INCH
-       "Use the arrows either side of the screen to change page. "
+       "Use the arrows either side of the screen, or swipe, to change page. "
 #else
-       "Tap an empty part of the screen to go to the next page. "
+       "Tap an empty part of the screen, or swipe, to change page. "
 #endif
-       "With Never, the page you pick stays put, even after a restart</span></label>";
+       "With Never, the page you pick stays put, even after a restart. "
+       "Home (tap the title bar) shows every page</span></label>";
 
   // Where you are, weather and time
   p += fieldset("Your area and time");

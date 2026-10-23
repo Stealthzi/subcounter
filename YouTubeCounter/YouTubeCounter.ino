@@ -5,8 +5,8 @@
    "Cheap Yellow Display" 2.8" (ESP32-2432S028R)
   ============================================================
 
-  Shows your YouTube channel's stats, plus a clock, weather and crypto prices,
-  on pages that change every few seconds (tap the screen to skip ahead).
+  Shows your YouTube channel's stats, plus a clock, weather and more, on pages
+  you move between with the arrows (7"), a swipe, or the Home screen.
 
   Everything is set up from a phone - there's nothing to edit in here:
     - First start (or when WiFi can't be found): the screen shows how to join
@@ -130,6 +130,9 @@ ScreenWatch screenWatch;               // counts screen glitches (see screen_wat
 extern volatile uint16_t writebackPieceKB, writebackGapUs;  // cache_writeback.cpp
 extern volatile uint32_t writebackCalls;
 #endif
+Overlay       overlay = OVERLAY_NONE;  // Home, Settings... on top of the page (see ui_home.ino)
+int           overlayScroll = 0;       // which set of tiles or list rows is showing
+unsigned long overlayTouchedAt = 0;
 unsigned long pageShownAt = 0;
 bool          infoShowing = false;
 unsigned long infoShownAt = 0;
@@ -138,6 +141,7 @@ unsigned long highlightUntil = 0;
 int           lastMinute = -1;
 bool          nightDimmed = false;
 unsigned long wakeUntil = 0;
+bool          sleeping = false;        // screen off until touched (Sleep on Home or Settings)
 
 // When each piece of data is next fetched (millis)
 unsigned long nextStats = 0, nextUploads = 0, nextComment = 0, nextTop = 0, nextCompare = 0;
@@ -305,6 +309,7 @@ void loop() {
   }
 
   runSchedule();
+  overlayTimeout();
   rotatePages();
   everyMinute();
   animatePage();
@@ -475,14 +480,14 @@ void onDataChanged(bool ok, int page) {
     wanderDirty = true;  // redraw once the cat has walked off
     return;
   }
-  if (infoShowing || keyboardOpen || lampGlowing()) return;
+  if (infoShowing || keyboardOpen || lampGlowing() || overlayOpen()) return;
   if (!channel.loaded) {
     if (!ok && page == PAGE_SUBS) showMessage("Can't load your channel", lastError, "Trying again in 30 seconds...");
     return;
   }
   // Staying on one page: after a restart, go back to the one you picked as soon
   // as it has something to show (giving up after a couple of minutes)
-  if (currentPage < 0 && !autoPages()) wantPage = prefs.getUChar("homepg", PAGE_SUBS);
+  if (currentPage < 0 && !autoPages()) wantPage = prefs.getUChar("homepg", PAGE_OVERVIEW);
   if (wantPage >= PAGE_COUNT || millis() > 120000) wantPage = -1;
   if (wantPage >= 0 && pageAvailable(wantPage)) {
     showPage(wantPage);
@@ -490,14 +495,15 @@ void onDataChanged(bool ok, int page) {
     return;
   }
   if (currentPage < 0) {
-    showPage(PAGE_SUBS);
+    showPage(pageAvailable(PAGE_OVERVIEW) ? PAGE_OVERVIEW : PAGE_SUBS);
     return;
   }
   drawHeader();
   bool affected = currentPage == page ||
                   (page == PAGE_SUBS && (currentPage == PAGE_CHANNEL || currentPage == PAGE_GROWTH ||
-                                         currentPage == PAGE_COMPARE)) ||
-                  (page == PAGE_LATEST && (currentPage == PAGE_RECENT || currentPage == PAGE_LIVE)) ||
+                                         currentPage == PAGE_COMPARE || currentPage == PAGE_OVERVIEW)) ||
+                  (page == PAGE_LATEST && (currentPage == PAGE_RECENT || currentPage == PAGE_LIVE ||
+                                           currentPage == PAGE_OVERVIEW)) ||
                   (page == PAGE_WEATHER && (currentPage == PAGE_ALERTS || currentPage == PAGE_CLOCK));
   if (!affected) return;
   if (pageHasData(currentPage)) drawCurrentPage();
@@ -576,6 +582,7 @@ bool pageHasData(int page) {
     case PAGE_SPOTIFY:     return spotify.loaded && spotify.playing;
     case PAGE_ANALYTICS:   return analytics.loaded || (cfg.googleToken.length() && analytics.problem.length());
     case PAGE_REPORT:      return reportAvailable();
+    case PAGE_OVERVIEW:    return channel.loaded;
   }
   return false;
 }
@@ -613,6 +620,14 @@ void leavePage(int page) {
   if (page == PAGE_MESSAGES) markMessagesRead();
 }
 
+// Where a page comes in PAGE_ORDER
+int orderOf(int page) {
+  for (int i = 0; i < PAGE_COUNT; i++) {
+    if (PAGE_ORDER[i] == page) return i;
+  }
+  return 0;
+}
+
 // Next page in order. While you're live, the live page shows between every page.
 void nextPage() {
   if (!channel.loaded) return;
@@ -620,9 +635,9 @@ void nextPage() {
     showPage(PAGE_LIVE);
     return;
   }
-  int from = lastNormalPage < 0 ? -1 : lastNormalPage;
+  int from = lastNormalPage < 0 ? -1 : orderOf(lastNormalPage);
   for (int i = 1; i <= PAGE_COUNT; i++) {
-    int p = (from + i + PAGE_COUNT) % PAGE_COUNT;
+    int p = PAGE_ORDER[(from + i + PAGE_COUNT) % PAGE_COUNT];
     if (p == PAGE_LIVE && liveIndex() >= 0) continue;  // already shown in between
     if (pageAvailable(p)) {
       showPage(p);
@@ -632,13 +647,13 @@ void nextPage() {
   showPage(PAGE_SUBS);
 }
 
-// The arrows: the page before or after this one, in order (-1 or 1)
+// The arrows and swipes: the page before or after this one, in order (-1 or 1)
 void stepPage(int dir) {
   if (!channel.loaded) return;
-  int from = (currentPage < 0 || currentPage == PAGE_LIVE) ? lastNormalPage : currentPage;
-  if (from < 0) from = PAGE_SUBS;
+  int from = currentPage >= 0 ? currentPage : lastNormalPage;
+  int at = from < 0 ? 0 : orderOf(from);
   for (int i = 1; i <= PAGE_COUNT; i++) {
-    int p = ((from + dir * i) % PAGE_COUNT + PAGE_COUNT) % PAGE_COUNT;
+    int p = PAGE_ORDER[((at + dir * i) % PAGE_COUNT + PAGE_COUNT) % PAGE_COUNT];
     if (pageAvailable(p)) {
       showPage(p);
       pagePicked();
@@ -662,7 +677,7 @@ bool autoPages() {
 
 // Someone is using the screen, so don't jump pages on them
 bool userBusy() {
-  return keyboardOpen || infoShowing || millis() - lastInteraction < 60000;
+  return keyboardOpen || infoShowing || overlayOpen() || millis() - lastInteraction < 60000;
 }
 
 // Pages that shouldn't be flipped away from right now
@@ -696,7 +711,8 @@ bool touchDown() {
   return tft.getTouch(&x, &y) > 0;
 }
 
-// Tap: press a button on the page, or go to the next page (or wake the screen at night)
+// Tap: press a button on the page, the arrows, Home or Settings (or wake the
+// screen at night). Swipe left or right: next or previous page.
 // Hold 2 s: info screen. Hold 8 s, or hold BOOT for 3 s: setup mode.
 void handleTouchAndButton() {
   static bool wasDown = false, armed = false;
@@ -705,7 +721,7 @@ void handleTouchAndButton() {
   static int32_t tapX = 0, tapY = 0;
   static int tapSide = 0;        // 7": the press started on an arrow strip
 
-  static int32_t lastX = 0;
+  static int32_t lastX = 0, lastY = 0;
   static int moved = 0;          // how far the finger has slid while down
   static bool stroked = false;
   static unsigned long lastStroke = 0;
@@ -713,20 +729,27 @@ void handleTouchAndButton() {
   int32_t x = 0, y = 0;
   bool down = tft.getTouch(&x, &y) > 0;
   unsigned long now = millis();
+  if (down && !wasDown && sleeping && armed) {
+    wakeUp();       // the touch that wakes it does nothing else
+    armed = false;
+  }
   if (down && !wasDown) {
     downAt = now;
     tapX = x;
     tapY = y;
     tapSide = tft.touchSide;
     lastX = x;
+    lastY = y;
     moved = 0;
     stroked = false;
   }
   if (down && wasDown) {
     moved += abs((int)(x - lastX));
     lastX = x;
+    lastY = y;
     // Sliding across the cat strokes it
     if (armed && !tapSide && moved > 30 && cfg.petType >= SP_CAT && currentPage == PAGE_PET && !keyboardOpen &&
+        !overlayOpen() &&
         !petFullScreen() && !petSpecialScene() &&
         y > PET_SCENE_Y && y < PET_BTN_Y && now - lastStroke > 300) {
       catStroke();
@@ -741,7 +764,11 @@ void handleTouchAndButton() {
     if (held >= 2000 && !infoShowing) showInfoScreen();
     if (held >= 8000) requestSetupMode();
   }
-  if (!down && wasDown && armed && now - downAt < 2000 && !stroked) onTap(tapX, tapY, tapSide);
+  if (!down && wasDown && armed && now - downAt < 2000 && !stroked) {
+    int dx = lastX - tapX, dy = lastY - tapY;
+    if (!tapSide && abs(dx) >= 70 && abs(dy) < 60 && now - downAt < 1000) onSwipe(dx < 0 ? 1 : -1);
+    else onTap(tapX, tapY, tapSide);
+  }
   if (!down) armed = true;  // ignore a touch that was already down at start
   wasDown = down;
 
@@ -777,17 +804,50 @@ void onTap(int x, int y, int side) {
     return;
   }
   highlighted = false;
+  if (overlayOpen()) {
+    overlayTap(x, y, side);
+    return;
+  }
+  if (currentPage < 0) return;
   if (side) {
+    // 7": arrows in the middle of the strips, Home and Settings below them
     lastInteraction = millis();
-    stepPage(side);
+    if (y >= SIDE_BUTTON_Y) {
+      if (side < 0) openHome();
+      else openSettings();
+    } else {
+      stepPage(side);
+    }
     return;
   }
-  if (currentPage >= 0 && pageTap(currentPage, x, y)) {
+  if (y < 34) {  // the title bar opens Home
+    openHome();
+    return;
+  }
+  if (pageTap(currentPage, x, y)) {
     lastInteraction = millis();
     return;
   }
+#if !BOARD_7INCH
+  // The small screen has no arrows, so a tap anywhere else moves on a page
   nextPage();
   pagePicked();
+#endif
+}
+
+// Finger slid across the page: dir 1 = next page (slid to the left), -1 = back
+void onSwipe(int dir) {
+  if (catWandering()) endWander();
+  if (nightDimmed && millis() > wakeUntil) {
+    wakeUntil = millis() + 30000;
+    applyBrightness();
+    return;
+  }
+  if (infoShowing || keyboardOpen || lampGlowing() || overlayOpen() || currentPage < 0) return;
+  if (currentPage == PAGE_PET && (petFullScreen() || petSpecialScene())) return;  // its own menus
+  highlighted = false;
+  lastInteraction = millis();
+  stepPage(dir);
 }
 
 // Buttons on interactive pages. Returns true if the tap was used.
@@ -813,7 +873,7 @@ void requestSetupMode() {
 
 void animatePage() {
   static unsigned long last = 0;
-  if (infoShowing || keyboardOpen) return;
+  if (infoShowing || keyboardOpen || sleeping) return;
   unsigned long now = millis();
   if (catWandering()) {
     if (now - last >= (unsigned long)max(60, ANIM_MIN_MS)) {
@@ -829,7 +889,7 @@ void animatePage() {
     }
     return;
   }
-  if (currentPage < 0) return;
+  if (currentPage < 0 || overlayOpen()) return;
   int interval = currentPage == PAGE_SCREENSAVER ? 40
                : currentPage == PAGE_STOPWATCH   ? 100
                : currentPage == PAGE_MOODLAMP    ? (BOARD_7INCH ? 160 : 50)  // repaints the whole screen
@@ -872,13 +932,15 @@ void everyMinute() {
     return;
   }
 
-  if (infoShowing || keyboardOpen || currentPage < 0 || lampGlowing() || catWandering()) return;
+  if (infoShowing || keyboardOpen || currentPage < 0 || lampGlowing() || catWandering() || overlayOpen() || sleeping) {
+    return;
+  }
   maybeCatVisit();
   if (catWandering()) return;
   drawHeader();
   if (currentPage == PAGE_CLOCK || currentPage == PAGE_LIVE || currentPage == PAGE_COMMENT ||
       currentPage == PAGE_LATEST || currentPage == PAGE_CALENDAR || currentPage == PAGE_COUNTDOWN ||
-      currentPage == PAGE_MESSAGES) {
+      currentPage == PAGE_MESSAGES || currentPage == PAGE_OVERVIEW) {
     drawCurrentPage();  // these show times that move on
   }
 }
@@ -896,7 +958,7 @@ bool isNightTime() {
 void applyBrightness() {
   nightDimmed = cfg.nightMode && isNightTime();
   bool awake = millis() < wakeUntil;
-  shownBrightness = nightDimmed && !awake ? cfg.nightBrightness : cfg.brightness;
+  shownBrightness = sleeping ? 0 : nightDimmed && !awake ? cfg.nightBrightness : cfg.brightness;
   tft.setBrightness(shownBrightness);
 }
 
@@ -973,6 +1035,9 @@ void usbDebug() {
   //   g  then a number: show that page, e.g. g16
   //   w  then a number: flush the cache in pieces of this many KB (0 = all at once)
   //   d  then a number: microseconds to wait between pieces
+  //   T  then x y side: a pretend tap, e.g. T160 10 0 (the title bar)
+  //   S  then 1 or -1: a pretend swipe
+  //   P  print what's showing and the on-screen settings
   while (Serial.available()) {
     char c = Serial.read();
     if (c == 's') {
@@ -981,8 +1046,37 @@ void usbDebug() {
       Serial.printf("stats %s\n", usbStatsOn ? "on" : "off");
     } else if (c == 'g') {
       int page = Serial.parseInt();
+      overlay = OVERLAY_NONE;
       if (page >= 0 && page < PAGE_COUNT) showPage(page);
       Serial.printf("page %d\n", currentPage);
+    } else if (c == 'T') {
+      // A pretend tap: T x y side (side -1 left strip, 1 right strip, 0 the page)
+      int tx = Serial.parseInt(), ty = Serial.parseInt(), side = Serial.parseInt();
+      if (sleeping) wakeUp();
+      else onTap(tx, ty, side);
+      usbState();
+    } else if (c == 'S') {
+      // A pretend swipe: S1 = next page, S-1 = back
+      onSwipe(Serial.parseInt() < 0 ? -1 : 1);
+      usbState();
+    } else if (c == 'P') {
+      usbState();
+    } else if (c == 'D') {
+      // Picture of the screen at half size: "SHOT w h", then w x h pixels, 2 bytes each (RGB565, high byte first)
+      static lgfx::rgb565_t line[800];
+      int w = lcd.width() / 2, h = lcd.height() / 2;
+      Serial.printf("SHOT %d %d\n", w, h);
+      static uint8_t out[800];
+      for (int y = 0; y < h; y++) {
+        lcd.readRect(0, y * 2, w * 2, 1, line);
+        for (int x = 0; x < w; x++) {
+          uint16_t px = line[x * 2].raw;
+          out[x * 2] = px >> 8;
+          out[x * 2 + 1] = px & 0xFF;
+        }
+        Serial.write(out, w * 2);
+      }
+      Serial.println();
     } else if (c == 'k') {
       if (!catWandering()) {
         lowResCanvas = !lowResCanvas;
@@ -1002,6 +1096,14 @@ void usbDebug() {
     xTaskCreatePinnedToCore(usbStatsLoop, "stats", 4096, nullptr, 2, &statsTask, 0);
   }
 #endif
+}
+
+// USB testing: what's showing, and the settings the on-screen Settings change
+void usbState() {
+  Serial.printf("state page %d overlay %d scroll %d sleeping %d brightness %d | timer %d bright %d night %d/%d "
+                "pages %08lx\n",
+                currentPage, (int)overlay, overlayScroll, (int)sleeping, (int)shownBrightness, (int)cfg.pageSecs,
+                (int)cfg.brightness, (int)cfg.nightMode, (int)cfg.nightBrightness, (unsigned long)cfg.pages);
 }
 
 #if BOARD_7INCH && !SCREEN_BOUNCE
