@@ -812,11 +812,14 @@ void onTap(int x, int y, int side) {
   if (side) {
     // 7": arrows in the middle of the strips, Home and Settings below them
     lastInteraction = millis();
+    pressSide(side, y >= SIDE_BUTTON_Y);
     if (y >= SIDE_BUTTON_Y) {
       if (side < 0) openHome();
       else openSettings();
     } else {
+      int before = currentPage;
       stepPage(side);
+      if (currentPage == before) drawCurrentPage();  // nowhere else to go: put the arrow back
     }
     return;
   }
@@ -1062,21 +1065,9 @@ void usbDebug() {
     } else if (c == 'P') {
       usbState();
     } else if (c == 'D') {
-      // Picture of the screen at half size: "SHOT w h", then w x h pixels, 2 bytes each (RGB565, high byte first)
-      static lgfx::rgb565_t line[800];
-      int w = lcd.width() / 2, h = lcd.height() / 2;
-      Serial.printf("SHOT %d %d\n", w, h);
-      static uint8_t out[800];
-      for (int y = 0; y < h; y++) {
-        lcd.readRect(0, y * 2, w * 2, 1, line);
-        for (int x = 0; x < w; x++) {
-          uint16_t px = line[x * 2].raw;
-          out[x * 2] = px >> 8;
-          out[x * 2 + 1] = px & 0xFF;
-        }
-        Serial.write(out, w * 2);
-      }
-      Serial.println();
+      usbScreenshot();
+    } else if (c == 'U') {
+      requestSetupMode();  // for testing setup mode's way back out
     } else if (c == 'k') {
       if (!catWandering()) {
         lowResCanvas = !lowResCanvas;
@@ -1095,6 +1086,27 @@ void usbDebug() {
   if (usbStatsOn && !statsTask) {
     xTaskCreatePinnedToCore(usbStatsLoop, "stats", 4096, nullptr, 2, &statsTask, 0);
   }
+#endif
+}
+
+// USB testing: a picture of the screen at half size. Sends "SHOT w h", then
+// w x h pixels, 2 bytes each (RGB565, high byte first).
+void usbScreenshot() {
+#if BOARD_7INCH
+  static lgfx::rgb565_t line[800];
+  static uint8_t out[800];
+  int w = lcd.width() / 2, h = lcd.height() / 2;
+  Serial.printf("SHOT %d %d\n", w, h);
+  for (int y = 0; y < h; y++) {
+    lcd.readRect(0, y * 2, w * 2, 1, line);
+    for (int x = 0; x < w; x++) {
+      uint16_t px = line[x * 2].raw;
+      out[x * 2] = px >> 8;
+      out[x * 2 + 1] = px & 0xFF;
+    }
+    Serial.write(out, w * 2);
+  }
+  Serial.println();
 #endif
 }
 

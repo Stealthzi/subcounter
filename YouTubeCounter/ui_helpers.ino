@@ -242,7 +242,7 @@ void drawNavArrowsIn(uint16_t arrow, uint16_t button) {
     }
     // Home and Settings, lit up while open
     bool lit = side < 0 ? overlay == OVERLAY_HOME : (overlayOpen() && overlay != OVERLAY_HOME);
-    uint16_t bg = lit ? C_ACCENT : button, fg = lit ? RGB565(8, 12, 30) : arrow;
+    uint16_t bg = lit ? C_ACCENT : button, fg = lit ? C_ON_ACCENT : arrow;
     int by = tft.Y(SIDE_BUTTON_CY);
     lcd.fillSmoothCircle(cx, by, 26, bg);
     if (side < 0) drawHomeIcon(cx, by, fg, bg);
@@ -253,6 +253,26 @@ void drawNavArrowsIn(uint16_t arrow, uint16_t button) {
     lcd.setTextColor(arrow);
     lcd.drawString(side < 0 ? "Home" : "Settings", cx, by + 33);
   }
+}
+
+// 7": lights up the arrow (button false) or the Home/Settings button
+// (button true) on one side for a moment, so you can see the tap landed
+void pressSide(int side, bool button) {
+  if (tft.ox <= 0) return;
+  int cx = side < 0 ? tft.ox / 2 : lcd.width() - tft.ox / 2;
+  if (button) {
+    int by = tft.Y(SIDE_BUTTON_CY);
+    lcd.fillSmoothCircle(cx, by, 26, C_ACCENT);
+    if (side < 0) drawHomeIcon(cx, by, C_ON_ACCENT, C_ACCENT);
+    else drawGearIcon(cx, by, C_ON_ACCENT, C_ACCENT);
+  } else {
+    int cy = lcd.height() / 2;
+    lcd.fillSmoothCircle(cx, cy, 28, C_ACCENT);
+    int tip = cx + side * 7, back = cx - side * 7;
+    lcd.drawWideLine(back, cy - 13, tip, cy, 3, C_ON_ACCENT);
+    lcd.drawWideLine(tip, cy, back, cy + 13, 3, C_ON_ACCENT);
+  }
+  delay(PRESS_MS);
 }
 
 // A little house, drawn straight onto the 7" screen around (cx, cy)

@@ -39,14 +39,19 @@ void drawSetupScreen() {
   tft.drawString("   If not, go to 192.168.4.1", 12, 136);
   tft.drawString("3. Fill it in, press Save.", 12, 160);
 
-  if (setupReason == SETUP_WIFI_FAILED) {
-    tft.setTextColor(C_AMBER);
-    tft.drawString(fitText("Couldn't join WiFi \"" + cfg.wifiName + "\"", W - 24).c_str(), 12, 192);
-    tft.drawString("Trying it again in 5 minutes.", 12, 210);
-  } else if (setupReason == SETUP_ASKED) {
+  // A way back out when everything is already set up
+  if (setupReason != SETUP_FIRST_TIME) {
+    if (setupReason == SETUP_WIFI_FAILED) {
+      tft.setTextColor(C_AMBER);
+      tft.drawString(fitText("Couldn't join WiFi \"" + cfg.wifiName + "\"", W - 24).c_str(), 12, 178);
+    }
+    drawButton(SETUP_BACK_X, SETUP_BACK_Y, SETUP_BACK_W, SETUP_BACK_H, setupBackLabel(), C_ACCENT, C_ON_ACCENT);
+    tft.setFont(F_SMALL);
+    tft.setTextDatum(D_TL);
     tft.setTextColor(C_DIM);
-    tft.drawString("Goes back to normal in 10 minutes", 12, 192);
-    tft.drawString("if nothing is changed.", 12, 210);
+    int tx = SETUP_BACK_X + SETUP_BACK_W + 10;
+    tft.drawString(setupReason == SETUP_WIFI_FAILED ? "It also tries again" : "Or it goes back", tx, SETUP_BACK_Y + 1);
+    tft.drawString(setupReason == SETUP_WIFI_FAILED ? "by itself in 5 min" : "by itself in 10 min", tx, SETUP_BACK_Y + 17);
   }
 
   tft.qrcode("WIFI:T:nopass;S:" SETUP_WIFI_NAME ";;", 190, 46, 120, 1, true);

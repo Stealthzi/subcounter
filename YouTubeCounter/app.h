@@ -8,7 +8,7 @@
 
 // ======================= FIRMWARE =======================
 
-#define FIRMWARE_VERSION "2.3.0"
+#define FIRMWARE_VERSION "2.3.1"
 
 // GitHub repository that holds the update files, as "github-name/repo-name".
 // While it says "your-github-name", remote updates are switched off.
@@ -53,6 +53,8 @@ uint16_t C_BG, C_BG_TOP, C_BG_BOTTOM, C_CARD, C_EDGE, C_LINE, C_GREY, C_DIM, C_A
 const uint16_t C_RED    = RGB565(255, 0, 51);
 const uint16_t C_WHITE  = RGB565(255, 255, 255);
 const uint16_t C_GREEN  = RGB565(46, 230, 140);
+const uint16_t C_ON_ACCENT = RGB565(8, 12, 30);  // text and pictures on an accent-coloured button
+const int PRESS_MS = 70;  // how long a pressed button stays lit before the screen changes
 const uint16_t C_AMBER  = RGB565(255, 176, 32);
 const uint16_t C_BLUE   = RGB565(90, 170, 255);
 const uint16_t C_YELLOW = RGB565(255, 214, 64);
@@ -355,6 +357,12 @@ enum Overlay : uint8_t { OVERLAY_NONE, OVERLAY_HOME, OVERLAY_SETTINGS, OVERLAY_P
 // 7": the Home and Settings buttons at the bottom of the side strips. Taps
 // below SIDE_BUTTON_Y (page units) press them; above it are the arrows.
 const int SIDE_BUTTON_Y = 168, SIDE_BUTTON_CY = 200;
+
+// Pictures on Home tiles that aren't pages (see ui_icons.ino)
+const int ICON_SETTINGS = -1, ICON_MORE = -2;
+
+// The way out of setup mode, on the setup screen (see setupModeLoop)
+const int SETUP_BACK_X = 12, SETUP_BACK_Y = 198, SETUP_BACK_W = 170, SETUP_BACK_H = 34;
 
 // What may go to ChatGPT with a question (one bit each). The calendar is off
 // unless you tick it, as event names can be personal.

@@ -30,7 +30,7 @@ If you'd like the pages to change by themselves, pick **Every 10 s** or **Every 
 
 **On the screen:**
 - **Arrows (7") or swipe:** the page before or after. **Tap (2.8"):** the next page. Buttons on a page work as normal.
-- **Home:** every page as a tile, plus **Sleep**.
+- **Home:** every page as a tile with a picture, plus **Sleep**. Buttons light up when you press them.
 - **Settings** (the button at the bottom right on the 7", or the tile on Home):
   - change pages by themselves (**Never**, every 10 or 30 seconds)
   - **brightness**
@@ -40,7 +40,7 @@ If you'd like the pages to change by themselves, pick **Every 10 s** or **Every 
 - **Sleep** (on Home or Settings): the screen goes off until you touch it. The touch that wakes it doesn't press anything. At night with "Dim" or "Screen off", a tap lights it up for 30 seconds.
 - **Mood lamp:** tap to change the colour (on the 2.8", tap the middle).
 - **Hold for 2 seconds:** info screen, showing the version, WiFi signal, any problems and the **settings page address**.
-- **Hold for 8 seconds:** setup mode. On the 2.8" board, holding the **BOOT** button on the back for 3 seconds does the same.
+- **Hold for 8 seconds:** setup mode. On the 2.8" board, holding the **BOOT** button on the back for 3 seconds does the same. If setup opens by mistake, tap **Back to the counter** (or **Try WiFi again** if it couldn't join your WiFi).
 - **Hold a finger on the screen while plugging it in:** setup mode.
 
 ---

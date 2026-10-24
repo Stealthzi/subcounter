@@ -604,9 +604,9 @@ void drawOverviewPage() {
   drawStatRow(156, 61, 156, viewsTodayLabel(true), vToday >= 0 ? signedCompact(vToday) : String("-"),
               vToday > 0 ? C_GREEN : C_WHITE);
   if (sWeek > 0 || sWeek < 0) {
-    drawStatRow(156, 84, 156, "SUBS THIS WEEK", signedCompact(sWeek), sWeek > 0 ? C_GREEN : C_AMBER);
+    drawStatRow(156, 84, 156, "SUBS 7 DAYS", signedCompact(sWeek), sWeek > 0 ? C_GREEN : C_AMBER);
   } else {
-    drawStatRow(156, 84, 156, "VIEWS THIS WEEK", vWeek >= 0 ? signedCompact(vWeek) : String("-"),
+    drawStatRow(156, 84, 156, "VIEWS 7 DAYS", vWeek >= 0 ? signedCompact(vWeek) : String("-"),
                 vWeek > 0 ? C_GREEN : C_WHITE);
   }
   drawStatRow(156, 107, 156, "VIDEOS", withCommas(channel.videos), C_WHITE);
@@ -645,26 +645,32 @@ void drawOverviewPage() {
     tft.drawString((" " + String(names[i])).c_str(), x + w, 183);
   }
 
-  // How fast it's going, and against your usual
-  String line;
+  // How fast it's going on the left, and a badge for how it compares with your usual
+  int badgeW = 0;
+  String speed;
+  tft.setFont(F_SMALL);
   if (v.live == LIVE_NOW) {
-    line = compact(v.liveViewers) + " watching now";
+    speed = compact(v.liveViewers) + " watching now";
   } else {
     long perHour = viewsPerHour();
-    if (perHour > 0) line = "+" + compact(perHour) + " views an hour";
+    if (perHour > 0) speed = "+" + compact(perHour) + " an hour";
     bool real;
     float vs = vsUsual(real);
     if (vs > 0) {
-      char buf[12];
-      snprintf(buf, sizeof(buf), vs >= 10 ? "%.0fx" : "%.1fx", vs);
-      if (line.length()) line += "   ";
-      line += String(real ? "" : "about ") + buf + " your usual";
+      char buf[28];
+      snprintf(buf, sizeof(buf), vs >= 10 ? "%s%.0fx your usual" : "%s%.1fx your usual", real ? "" : "about ", vs);
+      uint16_t colour = vs >= 1.15f ? C_GREEN : vs <= 0.85f ? C_AMBER : C_GREY;
+      badgeW = tft.textWidth(buf) + 16;
+      int bx = 304 - badgeW;
+      tft.fillSmoothRoundRect(bx, 199, badgeW, 18, 9, mix(to888(colour), to888(C_CARD), 0.75f));
+      tft.setTextDatum(D_MC);
+      tft.setTextColor(colour);
+      tft.drawString(buf, bx + badgeW / 2, 208);
     }
   }
-  if (line.length()) {
-    tft.setFont(F_SMALL);
+  if (speed.length()) {
+    tft.setTextDatum(D_ML);
     tft.setTextColor(C_GREY);
-    tft.setTextDatum(D_TL);
-    tft.drawString(fitText(line, 288).c_str(), 16, 202);
+    tft.drawString(fitText(speed, 288 - badgeW - 8).c_str(), 16, 208);
   }
 }

@@ -7,6 +7,9 @@ void startSetupMode(SetupReason reason) {
   setupMode = true;
   setupReason = reason;
   setupStartedAt = millis();
+  Serial.printf("Setup mode: %s\n", reason == SETUP_FIRST_TIME ? "settings not filled in yet"
+                                    : reason == SETUP_ASKED    ? "asked for (screen held, or held at start-up)"
+                                                               : "couldn't join WiFi");
   if (reason != SETUP_WIFI_FAILED) markFirmwareGood();
   showMessage("Starting setup mode...", "Looking for WiFi networks", "");
 
@@ -41,7 +44,38 @@ void setupModeLoop() {
                       : setupReason == SETUP_ASKED      ? 10UL * 60 * 1000 : 0;
   bool idle = lastPortalActivity == 0 || millis() - lastPortalActivity > 120000;
   if (limit && millis() - setupStartedAt > limit && idle) ESP.restart();
+
+  // The button on the screen goes straight back to normal (or tries the WiFi again)
+  static bool armed = false, wasDown = false;  // armed: the finger that opened setup has let go
+  static int32_t tapX = 0, tapY = 0;
+  int32_t x = 0, y = 0;
+  bool down = tft.getTouch(&x, &y) > 0;
+  if (down) {
+    tapX = x;
+    tapY = y;
+  }
+  // USB testing: D = picture of the screen, B = press the way-out button
+  bool usbPress = false;
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == 'D') usbScreenshot();
+    if (c == 'B') usbPress = true;
+  }
+  bool tapped = !down && wasDown && armed && hitBox(tapX, tapY, SETUP_BACK_X, SETUP_BACK_Y, SETUP_BACK_W, SETUP_BACK_H);
+  if ((tapped || usbPress) && setupReason != SETUP_FIRST_TIME) {
+    Serial.println("Setup mode: leaving by the button");
+    drawButton(SETUP_BACK_X, SETUP_BACK_Y, SETUP_BACK_W, SETUP_BACK_H, setupBackLabel(), C_ACCENT, C_ON_ACCENT);
+    delay(300);
+    ESP.restart();
+  }
+  if (!down) armed = true;
+  wasDown = down;
   delay(5);
+}
+
+// Setup mode's way out, for when it was opened by mistake or the WiFi was down
+const char* setupBackLabel() {
+  return setupReason == SETUP_WIFI_FAILED ? "Try WiFi again" : "Back to the counter";
 }
 
 void startWebServer() {

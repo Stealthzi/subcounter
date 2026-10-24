@@ -6,9 +6,9 @@
 // tapping the title bar at the top of any page. Settings has its own button
 // at the bottom of the right strip (7"), and a tile on Home.
 
-// Short names for the tiles and lists, in PageId order
+// Names for the list of screens, in PageId order
 const char* PAGE_SHORT[PAGE_COUNT] = {
-  "Sub count", "Channel stats", "Latest video", "Recent videos", "Top video",
+  "Subscribers", "Channel stats", "Latest video", "Recent videos", "Top video",
   "Newest comment", "7-day chart", "Head to head", "Live", "Clock", "Weather", "Crypto",
   "Energy", "Petrol", "Calendar", "Messages", "Pet", "Alerts",
   "Free games", "Relax", "Magic 8-ball", "Stopwatch", "Air quality", "Countdowns",
@@ -16,10 +16,18 @@ const char* PAGE_SHORT[PAGE_COUNT] = {
 };
 static_assert(sizeof(PAGE_SHORT) / sizeof(PAGE_SHORT[0]) == PAGE_COUNT, "a page is missing a short name");
 
+// Shorter still, for under the pictures on the Home tiles
+const char* PAGE_TILE[PAGE_COUNT] = {
+  "Subs", "Channel", "Latest", "Recent", "Top video", "Comment", "7 days", "Versus", "Live",
+  "Clock", "Weather", "Crypto", "Energy", "Petrol", "Calendar", "Messages", "Pet", "Alerts",
+  "Games", "Relax", "8-ball", "Stopwatch", "Air", "Countdown", "Mood lamp", "Joke", "Spotify",
+  "Exact stats", "Report", "Overview"
+};
+static_assert(sizeof(PAGE_TILE) / sizeof(PAGE_TILE[0]) == PAGE_COUNT, "a page is missing a tile name");
+
 const int TILE_COLS = 4, TILE_ROWS = 4, TILE_W = 74, TILE_H = 42, TILE_GAP = 4, TILE_TOP = 40;
 const int TILES_PER_VIEW = TILE_COLS * TILE_ROWS;
 const int LIST_ROWS = 6, LIST_TOP = 40, LIST_ROW_H = 24;
-const uint16_t C_ON_ACCENT = RGB565(8, 12, 30);  // text on an accent-coloured button
 
 bool overlayOpen() {
   return overlay != OVERLAY_NONE;
@@ -80,11 +88,21 @@ void drawOverlayTop(const String& title, const char* button, bool sleepButton) {
   tft.drawFastHLine(0, 33, W, C_LINE);
 }
 
-// Which top-bar button was tapped: 1 = Close/Done/Back, 2 = Sleep, 0 = neither
+// Which top-bar button was tapped: 1 = Close/Done/Back, 2 = Sleep, 0 = neither.
+// The button lights up for a moment so you can see the tap landed.
 int topBarButton(int x, int y) {
   if (y >= 34) return 0;
-  if (x >= W - 84) return 1;
-  if (x >= W - 156 && x < W - 84) return 2;
+  if (x >= W - 84) {
+    const char* label = overlay == OVERLAY_PAGES ? "Done" : overlay == OVERLAY_PHONE ? "Back" : "Close";
+    drawButton(W - 80, 5, 72, 24, label, C_ACCENT, C_ON_ACCENT);
+    delay(PRESS_MS);
+    return 1;
+  }
+  if (x >= W - 156 && (overlay == OVERLAY_HOME || overlay == OVERLAY_SETTINGS)) {
+    drawButton(W - 152, 5, 66, 24, "Sleep", C_ACCENT, C_ON_ACCENT);
+    delay(PRESS_MS);
+    return 2;
+  }
   return 0;
 }
 
@@ -116,31 +134,35 @@ int homeViews(int n) {
   return n <= TILES_PER_VIEW ? 1 : (n + TILES_PER_VIEW - 2) / (TILES_PER_VIEW - 1);
 }
 
-void drawTile(int slot, const String& name, uint16_t colour, bool current, bool plain) {
+// A Home tile: its picture with the name underneath. `icon` is a page, or
+// ICON_SETTINGS / ICON_MORE. The page you're on has an accent outline, and
+// a pressed tile lights up.
+void drawTile(int slot, int icon, const String& name, bool current, bool pressed) {
   int x = 4 + (slot % TILE_COLS) * (TILE_W + TILE_GAP);
   int y = TILE_TOP + (slot / TILE_COLS) * (TILE_H + TILE_GAP);
-  if (current) {
+  uint16_t bg = pressed ? C_ACCENT : C_CARD;
+  if (pressed) {
+    tft.fillSmoothRoundRect(x, y, TILE_W, TILE_H, 10, C_ACCENT);
+  } else if (current) {
     tft.fillSmoothRoundRect(x, y, TILE_W, TILE_H, 10, C_ACCENT);
     tft.fillSmoothRoundRect(x + 2, y + 2, TILE_W - 4, TILE_H - 4, 8, C_CARD);
   } else {
     drawCardBox(x, y, TILE_W, TILE_H);
   }
-  if (!plain) tft.fillSmoothRoundRect(x + 6, y + 10, 4, TILE_H - 20, 2, colour);
+  uint16_t colour = pressed ? C_ON_ACCENT : icon >= 0 ? pageColour(icon) : C_GREY;
+  drawPageIcon(icon, x + TILE_W / 2, y + 15, colour, bg);
   tft.setFont(F_SMALL);
   tft.setTextSize(1);
-  tft.setTextColor(C_WHITE);
-  tft.setTextDatum(D_ML);
-  // Up to two lines, split at a space
-  int textX = x + (plain ? 8 : 14), maxW = TILE_W - (plain ? 12 : 18);
-  if (tft.textWidth(name.c_str()) <= maxW || name.indexOf(' ') < 0) {
-    tft.drawString(fitText(name, maxW).c_str(), textX, y + TILE_H / 2);
-  } else {
-    int cut = name.lastIndexOf(' ');
-    while (cut > 0 && tft.textWidth(name.substring(0, cut).c_str()) > maxW) cut = name.lastIndexOf(' ', cut - 1);
-    if (cut <= 0) cut = name.indexOf(' ');
-    tft.drawString(fitText(name.substring(0, cut), maxW).c_str(), textX, y + TILE_H / 2 - 8);
-    tft.drawString(fitText(name.substring(cut + 1), maxW).c_str(), textX, y + TILE_H / 2 + 8);
-  }
+  tft.setTextColor(pressed ? C_ON_ACCENT : C_WHITE);
+  tft.setTextDatum(D_MC);
+  tft.drawString(fitText(name, TILE_W - 6).c_str(), x + TILE_W / 2, y + TILE_H - 9);
+}
+
+// What's on a tile: the screen it opens, Settings, or More
+void drawHomeTile(int slot, int tile, int views, bool pressed) {
+  if (tile == ICON_MORE) drawTile(slot, ICON_MORE, "More " + String(overlayScroll + 1) + "/" + String(views), false, pressed);
+  else if (tile < 0) drawTile(slot, ICON_SETTINGS, "Settings", false, pressed);
+  else drawTile(slot, tile, PAGE_TILE[tile], tile == currentPage, pressed);
 }
 
 void drawHome() {
@@ -151,12 +173,8 @@ void drawHome() {
   int per = views > 1 ? TILES_PER_VIEW - 1 : TILES_PER_VIEW;
   if (overlayScroll >= views) overlayScroll = 0;
   int first = overlayScroll * per;
-  for (int slot = 0; slot < per && first + slot < n; slot++) {
-    int p = tiles[first + slot];
-    if (p < 0) drawTile(slot, "Settings", C_GREY, false, false);
-    else drawTile(slot, PAGE_SHORT[p], pageColour(p), p == currentPage, false);
-  }
-  if (views > 1) drawTile(TILES_PER_VIEW - 1, "More " + String(overlayScroll + 1) + "/" + String(views), C_GREY, false, true);
+  for (int slot = 0; slot < per && first + slot < n; slot++) drawHomeTile(slot, tiles[first + slot], views, false);
+  if (views > 1) drawHomeTile(TILES_PER_VIEW - 1, ICON_MORE, views, false);
 }
 
 void homeTap(int x, int y) {
@@ -172,12 +190,16 @@ void homeTap(int x, int y) {
   int views = homeViews(n);
   int per = views > 1 ? TILES_PER_VIEW - 1 : TILES_PER_VIEW;
   if (views > 1 && slot == TILES_PER_VIEW - 1) {
+    drawHomeTile(slot, ICON_MORE, views, true);
+    delay(PRESS_MS);
     overlayScroll = (overlayScroll + 1) % views;
     drawOverlay();
     return;
   }
   int i = overlayScroll * per + slot;
   if (i >= n) return;
+  drawHomeTile(slot, tiles[i], views, true);
+  delay(PRESS_MS);
   if (tiles[i] < 0) return openSettings();
   overlay = OVERLAY_NONE;
   showPage(tiles[i]);
@@ -268,7 +290,10 @@ void settingsTap(int x, int y) {
     applyBrightness();
     drawOverlay();
   } else if (y >= SET_LINKS_Y - 4 && y < SET_LINKS_Y + 36) {
-    openOverlay(x < W / 2 ? OVERLAY_PAGES : OVERLAY_PHONE);
+    bool left = x < W / 2;
+    drawButton(left ? 8 : 164, SET_LINKS_Y, 148, 32, left ? "Choose screens" : "Phone settings", C_ACCENT, C_ON_ACCENT);
+    delay(PRESS_MS);
+    openOverlay(left ? OVERLAY_PAGES : OVERLAY_PHONE);
   }
 }
 
@@ -313,9 +338,16 @@ void pagePickerTap(int x, int y) {
   if (topBarButton(x, y) == 1) return openSettings();
   int views = pickerViews();
   if (y >= 204) {
-    if (x < 90) overlayScroll = (overlayScroll + views - 1) % views;
-    else if (x > W - 90) overlayScroll = (overlayScroll + 1) % views;
-    else return;
+    if (x < 90) {
+      drawButton(8, 208, 64, 28, "<", C_ACCENT, C_ON_ACCENT);
+      overlayScroll = (overlayScroll + views - 1) % views;
+    } else if (x > W - 90) {
+      drawButton(W - 72, 208, 64, 28, ">", C_ACCENT, C_ON_ACCENT);
+      overlayScroll = (overlayScroll + 1) % views;
+    } else {
+      return;
+    }
+    delay(PRESS_MS);
     drawOverlay();
     return;
   }
@@ -366,6 +398,7 @@ void overlayTap(int x, int y, int side) {
   if (side) {
     // The Home and Settings buttons open their screen, or shut it if it's already open
     if (y < SIDE_BUTTON_Y) return;
+    pressSide(side, true);
     if (side < 0) {
       if (overlay == OVERLAY_HOME) closeOverlay();
       else openHome();
